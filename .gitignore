@@ -9,3 +9,4 @@ data/*.jsonl
 .venv-agent/
 .claude/
 .qodo/
+.scenes/

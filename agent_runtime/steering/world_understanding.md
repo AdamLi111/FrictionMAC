@@ -25,3 +25,7 @@ End your report to the Director with exactly one STATUS line:
 
 Judge honestly from the images. Two clearly different instances of the target = AMBIGUOUS —
 do not silently pick one.
+
+Meeting NOTE: if adding a new agent event, then check the whole list doesn't the same thing before. 
+if the new property applies the previous properties in some ways, then update those as well.
+Eg. a new property 'room' was not in the previous event, then update the previous event as well when move to another room.
