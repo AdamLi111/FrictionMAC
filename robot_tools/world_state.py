@@ -56,6 +56,10 @@ class WorldState:
         """Return the stored info dict for `obj`, or None if unknown."""
         return self._load().get(obj)
 
+    def snapshot(self) -> dict:
+        """Return the entire world model (all objects) — for enumeration/dedup/ambiguity."""
+        return self._load()
+
     def update_world(self, obj: str, info: dict) -> dict:
         """
         Merge `info` (an open dict) into the record for `obj`. Other objects are left

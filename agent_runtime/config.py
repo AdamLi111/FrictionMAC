@@ -44,19 +44,29 @@ def read_steering(name: str) -> str:
 
 
 def robot_mcp_config(tool_log_path: Path, world_state_path: Path, scene: str | None = None) -> dict:
-    """Stdio MCP server config pointing at the stubbed robot tool layer.
+    """Stdio MCP server config pointing at the robot tool layer.
 
-    `scene` (optional) is a dir of scripted <direction>.jpg frames the stub serves for
-    perception tests (ROBOT_STUB_SCENE) — test scaffolding only, inert otherwise."""
+    Mode is chosen by the MISTY_IP env var:
+      - MISTY_IP set  -> REAL mode: the server connects to the physical Misty and fails
+                         loudly at startup if it's unreachable.
+      - MISTY_IP unset -> STUB mode (default): the robot is faked for offline dev. `scene`
+                         (a dir of scripted <direction>.jpg frames) is served in stub mode
+                         only (ROBOT_STUB_SCENE) for perception tests."""
     env = {
-        "ROBOT_STUB": "1",                      # robot stubbed for the whole agent phase
         "PYTHONPATH": str(REPO),                # make robot_tools importable via -m
         "PATH": os.environ.get("PATH", ""),
         "TOOL_LOG_PATH": str(tool_log_path),    # shared measurement boundary (JSONL)
         "WORLD_STATE_PATH": str(world_state_path),
     }
-    if scene:
-        env["ROBOT_STUB_SCENE"] = str(scene)
+    misty_ip = os.environ.get("MISTY_IP")
+    if misty_ip:
+        env["MISTY_IP"] = misty_ip              # REAL robot
+    else:
+        env["ROBOT_STUB"] = "1"                 # offline stub (default)
+        if scene:
+            env["ROBOT_STUB_SCENE"] = str(scene)
+        if os.environ.get("ROBOT_STUB_SLOW") == "1":
+            env["ROBOT_STUB_SLOW"] = "1"         # honor sleeps in stub (make tools slow)
     return {
         "type": "stdio",
         "command": str(ROBOT_PYTHON),
@@ -72,8 +82,9 @@ def robot_tool(name: str) -> str:
 
 ALL_ROBOT_TOOLS = [robot_tool(n) for n in [
     "move_forward", "move_backward", "strafe_left", "strafe_right",
-    "turn_left", "turn_right", "stop", "spatial_navigate",
-    "speak", "ask_clarification",
+    "turn_left", "turn_right", "stop",
+    "move_arm", "move_head", "display_image", "change_led",
+    "speak",
     "capture_view", "find_object",
-    "get_known_location", "update_world",
+    "get_known_location", "update_world", "get_world",
 ]]

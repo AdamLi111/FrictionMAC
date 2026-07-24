@@ -21,11 +21,12 @@ def _read_log(path):
 
 
 # --------------------------------------------------------------------- Test 1: all tools
-def test_all_14_tools_callable_and_shaped(stub_env):
+def test_all_17_tools_callable_and_shaped(stub_env):
     from robot_tools import tools
 
-    assert len(tools.ALL_TOOLS) == 14
+    assert len(tools.ALL_TOOLS) == 17
 
+    # movement
     r = tools.move_forward(2.0)
     assert r["ok"] is True and isinstance(r["duration_ms"], int)
     assert tools.move_backward(1.0)["ok"] is True
@@ -35,50 +36,55 @@ def test_all_14_tools_callable_and_shaped(stub_env):
     assert tools.turn_right(45)["ok"] is True
     assert tools.stop() == {"ok": True}
 
-    nav = tools.spatial_navigate("chair", distance=2.0, turn_degrees=-30)
-    assert nav["ok"] is True and nav["target_object"] == "chair" and isinstance(nav["duration_ms"], int)
+    # expression
+    assert tools.move_arm("both", 30)["ok"] is True
+    assert tools.move_head(pitch=-10)["ok"] is True
+    assert tools.display_image("e_Joy.jpg")["ok"] is True
+    assert tools.change_led(0, 255, 0)["ok"] is True
 
-    assert tools.speak("hello")["ok"] is True
-    ac = tools.ask_clarification("which cup?", friction_type="probing")
-    assert ac["ok"] is True and ac["friction_type"] == "probing"
+    # speech (friction_type required)
+    s = tools.speak("hello", friction_type="none")
+    assert s["ok"] is True and s["friction_type"] == "none"
 
+    # vision
     cv = tools.capture_view()
     assert cv["ok"] is True and isinstance(cv["image"], str) and cv["image"]
-
     fo = tools.find_object("bag")
     assert fo["ok"] is True and len(fo["frames"]) == 4
 
+    # world memory
     assert tools.get_known_location("nothing-known") is None
     uw = tools.update_world("mug", {"location": "kitchen counter"})
     assert uw["ok"] is True and uw["stored"]["location"] == "kitchen counter"
+    gw = tools.get_world()
+    assert gw["ok"] is True and gw["world"]["mug"]["location"] == "kitchen counter"
 
     # Every call above logged exactly one line; nothing raised.
     log = _read_log(stub_env["log_path"])
     tool_names = {e["name"] for e in log}
     for name in ["move_forward", "move_backward", "strafe_left", "strafe_right",
-                 "turn_left", "turn_right", "stop", "spatial_navigate", "speak",
-                 "ask_clarification", "capture_view", "find_object",
-                 "get_known_location", "update_world"]:
+                 "turn_left", "turn_right", "stop", "move_arm", "move_head",
+                 "display_image", "change_led", "speak", "capture_view", "find_object",
+                 "get_known_location", "update_world", "get_world"]:
         assert name in tool_names, f"{name} not logged"
 
 
-# ------------------------------------------------ Test 2: speak vs ask_clarification distinct
-def test_speak_and_clarification_are_distinct_in_log(stub_env):
+# --------------------------------- Test 2: friction_type labels every speak in the log
+def test_speak_logs_friction_type(stub_env):
     from robot_tools import tools
 
-    tools.speak("normal response")
-    tools.ask_clarification("did you mean the red one?", friction_type="probing")
+    tools.speak("normal response", friction_type="none")
+    tools.speak("did you mean the red one?", friction_type="probing")
 
     log = _read_log(stub_env["log_path"])
     speaks = [e for e in log if e["name"] == "speak"]
-    clars = [e for e in log if e["name"] == "ask_clarification"]
 
-    assert len(speaks) == 1 and len(clars) == 1
-    # Distinguishable by tool name in the JSONL...
-    assert speaks[0]["name"] != clars[0]["name"]
-    # ...and the friction label is captured on the clarification only.
-    assert clars[0]["args"]["friction_type"] == "probing"
-    assert "friction_type" not in speaks[0]["args"]
+    assert len(speaks) == 2
+    labels = [e["args"]["friction_type"] for e in speaks]
+    # A friction turn is distinguishable from a normal one purely by the required label.
+    assert "none" in labels and "probing" in labels
+    frictionful = [e for e in speaks if e["args"]["friction_type"] != "none"]
+    assert len(frictionful) == 1 and frictionful[0]["result"]["friction_type"] == "probing"
 
 
 # ----------------------------------- Test 3: movement calibrated ms + zero narration
@@ -213,3 +219,29 @@ def test_find_object_image_result_is_redacted_in_log(stub_env):
 
     cv = [e for e in log if e["name"] == "capture_view"][-1]
     assert cv["result"]["frames"] == 1 and "image" not in cv["result"]
+
+
+# ------------------------------------------ Test 7: motor-lock semantics
+def test_motor_locks_serialize_same_resource_but_not_different(stub_env):
+    from robot_tools import runtime
+
+    # Same resource -> the same lock object; different resources -> different locks.
+    assert runtime.motor_lock("DRIVE") is runtime.motor_lock("DRIVE")
+    assert runtime.motor_lock("DRIVE") is not runtime.motor_lock("ARM_LEFT")
+    # The two arms are independent actuators -> distinct locks.
+    assert runtime.motor_lock("ARM_LEFT") is not runtime.motor_lock("ARM_RIGHT")
+
+    drive = runtime.motor_lock("DRIVE")
+    assert drive.acquire(blocking=False) is True
+    try:
+        # While DRIVE is held, another DRIVE acquisition must fail (mutual exclusion)...
+        assert runtime.motor_lock("DRIVE").acquire(blocking=False) is False
+        # ...but a different motor resource stays free (can run concurrently).
+        left = runtime.motor_lock("ARM_LEFT")
+        assert left.acquire(blocking=False) is True
+        # ...and the OTHER arm is independent (left held doesn't block right).
+        assert runtime.motor_lock("ARM_RIGHT").acquire(blocking=False) is True
+        runtime.motor_lock("ARM_RIGHT").release()
+        left.release()
+    finally:
+        drive.release()

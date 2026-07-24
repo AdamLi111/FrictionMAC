@@ -43,6 +43,9 @@ class StubRobot:
     def move_head(self, **kwargs):
         return self._record("move_head", **kwargs)
 
+    def move_arm(self, **kwargs):
+        return self._record("move_arm", **kwargs)
+
     def change_led(self, **kwargs):
         return self._record("change_led", **kwargs)
 

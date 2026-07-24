@@ -1,0 +1,10 @@
+01:42:40 [session start] mode=STUB (no physical movement — set MISTY_IP to use the real robot)
+01:42:42 
+===== you: say hello =====
+01:42:45   ▶ delegated to regular-utterance — Propose hello greeting
+01:42:47   ✓ regular-utterance completed
+01:42:50   ▶ delegated to regular-utterance — Speak approved greeting
+01:42:52 Misty: Hello! Great to see you.
+01:42:53   ✓ regular-utterance completed
+01:42:55 ● turn complete (success)
+01:42:56 [session end]

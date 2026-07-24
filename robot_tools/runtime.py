@@ -8,6 +8,7 @@ that swap in temp paths / toggle stub mode).
 """
 import base64
 import os
+import threading
 
 from . import backend, config
 from .logging_jsonl import ToolLogger
@@ -19,6 +20,21 @@ from .vendor.vision_handler import VisionHandler
 FAKE_FRAME = backend.STUB_FRAME_B64
 
 _state = {}
+
+# Per-motor-resource locks. Tool calls that drive the SAME physical resource must not
+# overlap (mutual exclusion); calls on DIFFERENT resources may run concurrently. The MCP
+# server offloads each tool call to a worker thread, so these are threading.Locks. See
+# the resource -> tool mapping in tools.py.
+# NOTE: the two arms are independent actuators -> ARM_LEFT / ARM_RIGHT are separate locks,
+# so a left-arm move and a right-arm move can run at the same time.
+_MOTOR_RESOURCES = ("DRIVE", "HEAD", "ARM_LEFT", "ARM_RIGHT", "FACE", "LED")
+_MOTOR_LOCKS = {r: threading.Lock() for r in _MOTOR_RESOURCES}
+
+
+def motor_lock(resource: str) -> "threading.Lock":
+    """The mutex guarding one physical motor resource
+    (DRIVE / HEAD / ARM_LEFT / ARM_RIGHT / FACE / LED)."""
+    return _MOTOR_LOCKS[resource]
 
 # Calibration comes straight from the vendored ActionExecutor -- it is the source of
 # truth for meters/degrees -> milliseconds. The helpers are pure math (they never touch
@@ -66,8 +82,10 @@ def calc_turn_time(degrees) -> int:
 
 # --- stub-aware helpers ---
 def sleep(seconds: float) -> None:
-    """Real sequencing delay on hardware; a no-op in stub mode so tests run fast."""
-    if config.is_stub():
+    """Real sequencing delay on hardware; a no-op in stub mode so tests run fast.
+    Set ROBOT_STUB_SLOW=1 to honor the delays even in stub mode (used to make a stub
+    tool call reliably slow, e.g. for the background-task in-flight probe)."""
+    if config.is_stub() and os.environ.get("ROBOT_STUB_SLOW") != "1":
         return
     import time
     time.sleep(seconds)

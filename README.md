@@ -45,12 +45,15 @@ ROBOT_STUB=1 python -m robot_tools.server
 | `WORLD_STATE_PATH` | World-memory JSON file | `data/world_state.json` |
 | `TOOL_LOG_PATH` | JSONL tool-call log | `data/tool_calls.jsonl` |
 
-## The 14 tools
+## The 13 tools
 
-Movement: `move_forward`, `move_backward`, `strafe_left`, `strafe_right`, `turn_left`,
-`turn_right`, `stop` · Navigation: `spatial_navigate` · Speech: `speak`,
-`ask_clarification` · Vision: `capture_view`, `find_object` · World memory:
-`get_known_location`, `update_world`.
+Movement (primitives): `move_forward`, `move_backward`, `strafe_left`, `strafe_right`,
+`turn_left`, `turn_right`, `stop` · Speech: `speak`, `ask_clarification` · Vision:
+`capture_view`, `find_object` · World memory: `get_known_location`, `update_world`.
+
+Navigation is not a single tool — the Director composes movement primitives in a
+perceive→move→re-perceive loop (with obstacle detours). The old `spatial_navigate` composite
+was removed.
 
 - Tools **never narrate** — only `speak`/`ask_clarification` talk.
 - Vision tools return **raw base64 frames**; the agent (a VLM) reasons over them — no VLM runs in the server.

@@ -10,6 +10,7 @@ Design rules (see UNDERSTANDING.md section 7):
     directly. They NEVER narrate -- speak() and ask_clarification() are the only talkers.
   - Vision returns raw base64 frames; no VLM runs here (the agent reasons over the images).
 """
+import contextlib
 import functools
 import inspect
 
@@ -46,102 +47,155 @@ def _tool(redact=None):
 
 
 # --------------------------------------------------------------------------- movement
+# All wheel movement holds the DRIVE lock, so two drive/turn/scan calls can never overlap
+# on the motors (find_object's 360 scan holds it too). Non-DRIVE tools run concurrently.
 @_tool()
 def move_forward(distance: float = 1.0) -> dict:
     ms = runtime.calc_drive_time(distance)
-    runtime.get_robot().drive_time(50, 0, ms)
+    with runtime.motor_lock("DRIVE"):
+        runtime.get_robot().drive_time(50, 0, ms)
+        runtime.sleep(ms / 1000)
     return {"ok": True, "duration_ms": ms}
 
 
 @_tool()
 def move_backward(distance: float = 1.0) -> dict:
     ms = runtime.calc_drive_time(distance)
-    runtime.get_robot().drive_time(-50, 0, ms)
+    with runtime.motor_lock("DRIVE"):
+        runtime.get_robot().drive_time(-50, 0, ms)
+        runtime.sleep(ms / 1000)
     return {"ok": True, "duration_ms": ms}
 
 
 @_tool()
 def strafe_left(distance: float = 1.0) -> dict:
-    r = runtime.get_robot()
-    r.drive_time(0, -100, 2150)            # pivot ~45 deg left
-    runtime.sleep(2.5)
     ms = runtime.calc_drive_time(distance)
-    r.drive_time(50, 0, ms)                # drive forward
-    runtime.sleep(ms / 1000 + 0.5)
-    r.drive_time(0, 100, 2150)             # pivot back
+    with runtime.motor_lock("DRIVE"):
+        r = runtime.get_robot()
+        r.drive_time(0, -100, 2150)            # pivot ~45 deg left
+        runtime.sleep(2.5)
+        r.drive_time(50, 0, ms)                # drive forward
+        runtime.sleep(ms / 1000 + 0.5)
+        r.drive_time(0, 100, 2150)             # pivot back
     return {"ok": True, "duration_ms": ms}
 
 
 @_tool()
 def strafe_right(distance: float = 1.0) -> dict:
-    r = runtime.get_robot()
-    r.drive_time(0, 100, 2150)             # pivot ~45 deg right
-    runtime.sleep(2.5)
     ms = runtime.calc_drive_time(distance)
-    r.drive_time(50, 0, ms)                # drive forward
-    runtime.sleep(ms / 1000 + 0.5)
-    r.drive_time(0, -100, 2150)            # pivot back
+    with runtime.motor_lock("DRIVE"):
+        r = runtime.get_robot()
+        r.drive_time(0, 100, 2150)             # pivot ~45 deg right
+        runtime.sleep(2.5)
+        r.drive_time(50, 0, ms)                # drive forward
+        runtime.sleep(ms / 1000 + 0.5)
+        r.drive_time(0, -100, 2150)            # pivot back
     return {"ok": True, "duration_ms": ms}
 
 
 @_tool()
 def turn_left(degrees: float) -> dict:
     ms = runtime.calc_turn_time(degrees)
-    runtime.get_robot().drive_time(0, 100, ms)
+    with runtime.motor_lock("DRIVE"):
+        runtime.get_robot().drive_time(0, 100, ms)
+        runtime.sleep(ms / 1000)
     return {"ok": True, "duration_ms": ms}
 
 
 @_tool()
 def turn_right(degrees: float) -> dict:
     ms = runtime.calc_turn_time(degrees)
-    runtime.get_robot().drive_time(0, -100, ms)
+    with runtime.motor_lock("DRIVE"):
+        runtime.get_robot().drive_time(0, -100, ms)
+        runtime.sleep(ms / 1000)
     return {"ok": True, "duration_ms": ms}
 
 
 @_tool()
 def stop() -> dict:
+    # stop() must not wait behind an in-flight drive — it pre-empts, so no DRIVE lock.
     runtime.get_robot().stop()
     return {"ok": True}
 
 
-# ------------------------------------------------------------------------- navigation
+# ------------------------------------------------------------------------- expression
+# Emotional expression via distinct motor resources (arms, head, face display, chest LED).
+# Each holds its own lock so they can run concurrently with each other and with driving.
+# Misty II hardware ranges (degrees), used to clamp so we never command out-of-range:
+ARM_MIN, ARM_MAX = -29.0, 90.0          # -29 = straight up, 90 = straight down
+HEAD_PITCH_MIN, HEAD_PITCH_MAX = -40.0, 26.0   # negative = up
+HEAD_ROLL_MIN, HEAD_ROLL_MAX = -40.0, 40.0
+HEAD_YAW_MIN, HEAD_YAW_MAX = -81.0, 81.0        # negative = right
+
+
+def _clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
 @_tool()
-def spatial_navigate(target_object: str, distance: float = 0.0, turn_degrees: float = 0.0) -> dict:
-    """Composite: turn (sign = direction) then drive with a collision margin
-    (safe = max(0.3, distance - 0.5)). Kept as one tool because it bundles that margin."""
+def move_arm(arm: str = "both", position: float = 0.0, velocity: float = 50.0) -> dict:
+    """Move an arm to `position` degrees. Misty II range: **-29 (up) .. 90 (down)** (clamped).
+    arm: left|right|both. The arms are independent motors with separate locks, so a left-arm
+    move and a right-arm move can run concurrently; two moves of the SAME arm serialize."""
+    position = _clamp(position, ARM_MIN, ARM_MAX)
     r = runtime.get_robot()
-    turn_ms = 0
-    if turn_degrees:
-        turn_ms = runtime.calc_turn_time(abs(turn_degrees))
-        if turn_degrees < 0:
-            r.drive_time(0, 100, turn_ms)   # left
-        else:
-            r.drive_time(0, -100, turn_ms)  # right
-        runtime.sleep(turn_ms / 1000 + 0.5)
+    arms = ["left", "right"] if arm == "both" else [arm]
+    with contextlib.ExitStack() as stack:
+        # Acquire each arm's own lock (fixed left→right order avoids deadlock).
+        for a in arms:
+            stack.enter_context(runtime.motor_lock(f"ARM_{a.upper()}"))
+        for a in arms:
+            r.move_arm(arm=a, position=position, velocity=velocity, units="degrees")
+    return {"ok": True, "arm": arm, "position": position}
 
-    drive_ms = 0
-    if distance and distance > 0:
-        safe = max(0.3, distance - 0.5)
-        drive_ms = runtime.calc_drive_time(safe)
-        r.drive_time(50, 0, drive_ms)
-        runtime.sleep(drive_ms / 1000 + 0.5)
 
-    return {"ok": True, "target_object": target_object, "duration_ms": turn_ms + drive_ms}
+@_tool()
+def move_head(pitch: float = 0.0, roll: float = 0.0, yaw: float = 0.0, velocity: float = 50.0) -> dict:
+    """Move the head, degrees (clamped to Misty II ranges): pitch -40..26 (neg=up),
+    roll -40..40, yaw -81..81 (neg=right)."""
+    pitch = _clamp(pitch, HEAD_PITCH_MIN, HEAD_PITCH_MAX)
+    roll = _clamp(roll, HEAD_ROLL_MIN, HEAD_ROLL_MAX)
+    yaw = _clamp(yaw, HEAD_YAW_MIN, HEAD_YAW_MAX)
+    with runtime.motor_lock("HEAD"):
+        runtime.get_robot().move_head(pitch=pitch, roll=roll, yaw=yaw, velocity=velocity, units="degrees")
+    return {"ok": True, "pitch": pitch, "roll": roll, "yaw": yaw}
+
+
+@_tool()
+def display_image(image_name: str) -> dict:
+    """Show a face image (e.g. Misty's built-in eye images: 'e_Joy.jpg', 'e_Anger.jpg',
+    'e_Sadness.jpg', 'e_Surprise.jpg', 'e_DefaultContent.jpg')."""
+    with runtime.motor_lock("FACE"):
+        runtime.get_robot().display_image(fileName=image_name)
+    return {"ok": True, "image_name": image_name}
+
+
+@_tool()
+def change_led(red: int = 0, green: int = 0, blue: int = 0) -> dict:
+    """Set the chest LED colour (0-255 each)."""
+    with runtime.motor_lock("LED"):
+        runtime.get_robot().change_led(red=red, green=green, blue=blue)
+    return {"ok": True, "rgb": [red, green, blue]}
+
+
+# Navigation is no longer a single composite tool. The Director composes primitive
+# movements (turn_* + move_forward, plus strafe/back for obstacle detours) in a
+# perceive -> move -> re-perceive loop instead. (Removed spatial_navigate.)
 
 
 # ----------------------------------------------------------------------------- speech
+# One speak tool. `friction_type` is REQUIRED and labels every utterance: "none" for a
+# normal utterance, or one of the five positive-friction types for a friction turn. The
+# label (in the JSONL) is the authoritative record of whether/what friction was applied.
+FRICTION_TYPES = ("none", "probing", "assumption_reveal", "overspecification",
+                  "reflective_pause", "reinforcement")
+
+
 @_tool()
-def speak(text: str) -> dict:
-    """Normal spoken response."""
+def speak(text: str, friction_type: str) -> dict:
+    """Say `text` aloud. `friction_type` is required: 'none' for a normal utterance, else one
+    of {probing, assumption_reveal, overspecification, reflective_pause, reinforcement}."""
     runtime.get_robot().speak(text)
-    return {"ok": True}
-
-
-@_tool()
-def ask_clarification(question: str, friction_type: str = None) -> dict:
-    """A clarification/friction turn -- a DISTINCT tool from speak() so clarifications are
-    countable and gate-able later. friction_type is a logged label only, not enforced."""
-    runtime.get_robot().speak(question)
     return {"ok": True, "friction_type": friction_type}
 
 
@@ -178,14 +232,15 @@ def find_object(target_object: str) -> dict:
     r = runtime.get_robot()
     directions = ["front", "left", "back", "right"]
     frames = []
-    for i, direction in enumerate(directions):
-        frames.append({"direction": direction, "image": runtime.capture_frame(direction)})
-        if i < 3:
-            r.drive_time(0, 100, runtime.calc_turn_time(90))  # turn 90 deg left
-            runtime.sleep(2)
-    # return to the original heading
-    r.drive_time(0, 100, runtime.calc_turn_time(90))
-    runtime.sleep(2)
+    with runtime.motor_lock("DRIVE"):  # the 360 scan turns the wheels — hold DRIVE throughout
+        for i, direction in enumerate(directions):
+            frames.append({"direction": direction, "image": runtime.capture_frame(direction)})
+            if i < 3:
+                r.drive_time(0, 100, runtime.calc_turn_time(90))  # turn 90 deg left
+                runtime.sleep(2)
+        # return to the original heading
+        r.drive_time(0, 100, runtime.calc_turn_time(90))
+        runtime.sleep(2)
     return {"ok": True, "target_object": target_object, "frames": frames}
 
 
@@ -203,11 +258,23 @@ def update_world(object: str, info: dict) -> dict:
     return {"ok": True, "object": object, "stored": stored}
 
 
+@_tool()
+def get_world() -> dict:
+    """Return the ENTIRE world model: {object: info, ...}. Use to enumerate everything known
+    (e.g. to detect ambiguity, or to propagate a shared property across entries)."""
+    return {"ok": True, "world": runtime.get_world().snapshot()}
+
+
 # Canonical tool set, for server registration and tests.
 ALL_TOOLS = [
-    move_forward, move_backward, strafe_left, strafe_right,
-    turn_left, turn_right, stop, spatial_navigate,
-    speak, ask_clarification,
+    # movement (DRIVE)
+    move_forward, move_backward, strafe_left, strafe_right, turn_left, turn_right, stop,
+    # expression (ARM/HEAD/FACE/LED)
+    move_arm, move_head, display_image, change_led,
+    # speech
+    speak,
+    # vision
     capture_view, find_object,
-    get_known_location, update_world,
+    # world memory
+    get_known_location, update_world, get_world,
 ]
