@@ -10,3 +10,4 @@ data/*.jsonl
 .claude/
 .qodo/
 .scenes/
+.temp_images/
