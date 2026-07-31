@@ -2,22 +2,28 @@
 Interactive robot console — a real conversation with Misty.
 
 On screen you see ONLY your typed lines and Misty's spoken replies ("Misty: ..."). Each
-session writes THREE leveled transcripts (cumulative, most-verbose contains the others):
-
-  * <session>.info.log   — overall flow only: the command, which agent(s) were delegated to
-                           and whether they finished/failed, what Misty said, turn complete.
-  * <session>.debug.log  — INFO + the agents' responses, thinking/decision process, tool
-                           calls, and subagents' returned reports, plus result text.
-  * <session>.full.log   — everything, including the claude-agent system boilerplate
-                           (init dump, token counters, stderr, raw message data).
+session writes one transcript at the chosen LOG_LEVEL (INFO | DEBUG | FULL, default DEBUG) to
+`data/hw_session_<ts>.<level>.log`.
 
 One persistent session, so Misty remembers the conversation across turns.
+
+Multi-turn robustness: a background task started in one turn can complete during the next, and
+its completion notification must not bleed into (and hijack) the following user turn. To handle
+that cleanly:
+  * a single reader task drains the SDK message stream into a queue (the generator is never
+    cancelled mid-read — that would corrupt it; only queue reads get timeouts);
+  * completed task-ids are tracked at the SESSION level, so a late/duplicate completion is
+    recognised as already-done and ignored;
+  * each turn drains trailing messages (waits for a quiet gap after the Director finishes) so
+    stragglers are consumed within the turn;
+  * any messages buffered between turns are drained before the next user command is sent.
 
 Run (real robot):    MISTY_IP=172.20.10.2 .venv-agent/bin/python -m scripts.hw_console
 Run (dry, no robot): .venv-agent/bin/python -m scripts.hw_console
 
 Type 'quit' (or Ctrl-C) to end.
 """
+import math
 import os
 import time
 
@@ -34,6 +40,7 @@ from agent_runtime import config, main as agent_main
 SPEAK = config.robot_tool("speak")
 QUIT = {"quit", "exit", "q", ":q"}
 _LEVEL = {"INFO": 0, "DEBUG": 1, "FULL": 2}
+QUIET_S = 2.0   # after the Director finishes, wait this long of silence to drain stragglers
 
 
 def _terminal_status(msg):
@@ -46,7 +53,6 @@ def _terminal_status(msg):
 
 
 def _raw(msg) -> str:
-    """Full untruncated dump of a message for the FULL log."""
     cls = type(msg).__name__
     lines = [f"<<{cls}>>"]
     content = getattr(msg, "content", None)
@@ -72,14 +78,13 @@ def _raw(msg) -> str:
 
 
 class Logs:
-    """Writes one transcript at the chosen level. Levels are cumulative (INFO⊂DEBUG⊂FULL):
-    at DEBUG you get INFO + DEBUG entries; at FULL you get everything."""
+    """One transcript at the chosen level (cumulative: INFO⊂DEBUG⊂FULL)."""
     def __init__(self, path, level):
         self.threshold = _LEVEL[level]
         self.f = open(path, "a", encoding="utf-8")
 
     def emit(self, level, text):
-        if _LEVEL[level] <= self.threshold:   # keep entries at or below the chosen verbosity
+        if _LEVEL[level] <= self.threshold:
             self.f.write(f"{time.strftime('%H:%M:%S')} {text}\n")
             self.f.flush()
 
@@ -87,8 +92,10 @@ class Logs:
         self.f.close()
 
 
-def _process(msg, logs, state):
-    """Route one message to the right log level(s); print Misty's speech; track tasks."""
+def _process(msg, logs, turn, sess):
+    """Route one message to the right log level(s); print Misty's speech; track tasks.
+    `turn` holds this turn's pending/result_seen/spoke; `sess` holds session-wide task labels
+    and the set of already-completed task-ids (for cross-turn dedup)."""
     cls = type(msg).__name__
 
     if isinstance(msg, AssistantMessage):
@@ -102,18 +109,19 @@ def _process(msg, logs, state):
                 name, inp = b.name, (b.input or {})
                 if name in ("Agent", "Task"):
                     st = inp.get("subagent_type", "?")
-                    logs.emit("DEBUG", f"[delegate→{st}] {inp.get('description', '')} "
+                    fgbg = "background" if inp.get("run_in_background") else "foreground"
+                    logs.emit("DEBUG", f"[delegate→{st}] ({fgbg}) {inp.get('description', '')} "
                                        f"| prompt={inp.get('prompt', '')}")
                 elif name == SPEAK:
                     text = inp.get("text", "")
-                    print(f"Misty: {text}")                     # <-- only console output
+                    print(f"Misty: {text}")
                     logs.emit("INFO", f"Misty: {text}")
                     logs.emit("DEBUG", f"[speak/{inp.get('friction_type', '')}] {text}")
-                    state["spoke"] = True
+                    turn["spoke"] = True
                 else:
                     logs.emit("DEBUG", f"[tool] {name} input={inp}")
 
-    elif cls == "UserMessage":                                  # subagent reports / tool results
+    elif cls == "UserMessage":
         for b in getattr(msg, "content", None) or []:
             if hasattr(b, "content"):
                 logs.emit("DEBUG", f"[report] {b.content}")
@@ -121,46 +129,75 @@ def _process(msg, logs, state):
                 logs.emit("DEBUG", f"[report] {b.text.strip()}")
 
     elif isinstance(msg, ResultMessage):
-        state["result_seen"] = True
+        turn["result_seen"] = True
         logs.emit("INFO", f"● turn complete ({msg.subtype})")
         if msg.result:
             logs.emit("DEBUG", f"[result] {msg.result}")
 
     elif isinstance(msg, SystemMessage):
         tid = agent_main._task_started_id(msg)
-        if tid and tid not in state["labels"]:                  # report each task's start once
+        if tid and tid not in sess["labels"]:
             data = getattr(msg, "data", None) or {}
             st = data.get("subagent_type", "?")
-            state["pending"].add(tid)
-            state["labels"][tid] = st
+            sess["labels"][tid] = st
+            turn["pending"].add(tid)
             logs.emit("INFO", f"  ▶ delegated to {st} — {data.get('description', '')}")
         done = agent_main._task_terminal_id(msg)
-        if done and done not in state["done"]:                  # report each terminal once
-            st = state["labels"].get(done, "?")
-            status = _terminal_status(msg)
-            state["pending"].discard(done)
-            state["done"].add(done)
-            mark = "✓" if status in ("completed", "succeeded") else "✗"
-            logs.emit("INFO", f"  {mark} {st} {status}")
-        logs.emit("FULL", _raw(msg))                            # raw system noise -> FULL only
+        if done:
+            if done in sess["done"]:
+                # A late/duplicate completion of a task already finished in an earlier turn.
+                logs.emit("FULL", f"[stale task completion ignored] {done}")
+            else:
+                sess["done"].add(done)
+                turn["pending"].discard(done)
+                st = sess["labels"].get(done, "?")
+                mark = "✓" if _terminal_status(msg) in ("completed", "succeeded") else "✗"
+                logs.emit("INFO", f"  {mark} {st} {_terminal_status(msg)}")
+        logs.emit("FULL", _raw(msg))
 
     else:
         logs.emit("FULL", _raw(msg))
 
 
-async def _collect_turn(agen, logs) -> bool:
-    """Read one Director turn to completion (incl. background tasks). Plain async-for + break
-    (never cancels an in-flight receive); outer timeout is only a hang guard."""
-    state = {"pending": set(), "labels": {}, "done": set(), "result_seen": False, "spoke": False}
-    with anyio.move_on_after(agent_main.MAX_COLLECT_S) as scope:
-        async for msg in agen:
-            _process(msg, logs, state)
-            if state["result_seen"] and not state["pending"]:
+def _drain_now(recv, logs, sess):
+    """Consume everything currently buffered (stragglers / an inter-turn notification-triggered
+    turn) WITHOUT blocking, so it can't merge into the next user turn."""
+    scratch = {"pending": set(), "result_seen": False, "spoke": False}
+    n = 0
+    while True:
+        try:
+            msg = recv.receive_nowait()
+        except (anyio.WouldBlock, anyio.EndOfStream):
+            break
+        if n == 0:
+            logs.emit("DEBUG", "[between turns] draining buffered messages")
+        n += 1
+        _process(msg, logs, scratch, sess)
+
+
+async def _collect_turn(recv, logs, sess) -> bool:
+    """Read one user turn to completion. Ends only after the Director has finished AND no
+    background task is still pending AND the stream has been quiet for QUIET_S (so trailing
+    completions are drained into this turn). Reads the queue (safe to time out), never the raw
+    generator."""
+    turn = {"pending": set(), "result_seen": False, "spoke": False}
+    t0 = time.monotonic()
+    while True:
+        if time.monotonic() - t0 > agent_main.MAX_COLLECT_S:
+            logs.emit("INFO", "  ! turn timeout")
+            break
+        msg = None
+        with anyio.move_on_after(QUIET_S) as scope:
+            try:
+                msg = await recv.receive()
+            except anyio.EndOfStream:
                 break
-    if scope.cancelled_caught:
-        logs.emit("INFO", "  ! timed out waiting for the robot")
-        print("(timed out waiting for the robot)")
-    return state["spoke"]
+        if scope.cancelled_caught:                       # quiet for QUIET_S
+            if turn["result_seen"] and not turn["pending"]:
+                break                                    # settled and drained
+            continue                                     # a task is still working
+        _process(msg, logs, turn, sess)
+    return turn["spoke"]
 
 
 async def run():
@@ -178,6 +215,7 @@ async def run():
     os.environ["AGENT_EVENT_LOG"] = str(config.DATA_DIR / f"hw_session_{stamp}_events.jsonl")
 
     logs = Logs(transcript, level)
+    sess = {"labels": {}, "done": set()}   # session-wide task tracking (cross-turn dedup)
 
     ip = os.environ.get("MISTY_IP")
     mode = f"REAL robot (MISTY_IP={ip})" if ip else \
@@ -191,23 +229,38 @@ async def run():
 
     try:
         async with ClaudeSDKClient(options=options) as client:
-            agen = client.receive_messages()      # one continuous stream, reused per turn
-            while True:
+            send, recv = anyio.create_memory_object_stream(max_buffer_size=math.inf)
+            async with anyio.create_task_group() as tg:
+                async def reader():
+                    # Drain the SDK stream into the queue. Never cancelled mid-turn (only at
+                    # session end), so the generator is never corrupted.
+                    try:
+                        async for msg in client.receive_messages():
+                            send.send_nowait(msg)
+                    finally:
+                        send.close()
+
+                tg.start_soon(reader)
                 try:
-                    cmd = (await anyio.to_thread.run_sync(lambda: input("you> "))).strip()
-                except (EOFError, KeyboardInterrupt):
-                    print()
-                    break
-                if cmd.lower() in QUIT:
-                    break
-                if not cmd:
-                    continue
-                logs.emit("INFO", f"\n===== you: {cmd} =====")
-                await client.query(cmd)
-                spoke = await _collect_turn(agen, logs)
-                if not spoke:
-                    print("(no spoken reply)")
-                    logs.emit("INFO", "  (no spoken reply)")
+                    while True:
+                        try:
+                            cmd = (await anyio.to_thread.run_sync(lambda: input("you> "))).strip()
+                        except (EOFError, KeyboardInterrupt):
+                            print()
+                            break
+                        if cmd.lower() in QUIT:
+                            break
+                        if not cmd:
+                            continue
+                        _drain_now(recv, logs, sess)     # clear inter-turn stragglers first
+                        logs.emit("INFO", f"\n===== you: {cmd} =====")
+                        await client.query(cmd)
+                        spoke = await _collect_turn(recv, logs, sess)
+                        if not spoke:
+                            print("(no spoken reply)")
+                            logs.emit("INFO", "  (no spoken reply)")
+                finally:
+                    tg.cancel_scope.cancel()             # stop the reader; end the session
     finally:
         logs.emit("INFO", "[session end]")
         logs.close()

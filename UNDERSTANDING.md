@@ -1,5 +1,17 @@
 # UNDERSTANDING.md — Robot Tool Layer (Phase 1)
 
+> **⚠️ Historical Phase-1 design record.** The tool surface below (14 tools) is the original
+> plan and has since evolved. The **current surface is 18 tools** — see
+> [README.md](README.md) for the authoritative list. Notable changes since:
+> - `spatial_navigate` **removed** (the Director composes primitive moves in a closed loop);
+> - `ask_clarification` **merged into** `speak(text, friction_type)` (one tool; `friction_type`
+>   required — `none` or one of five friction types);
+> - **added** expression tools (`move_arm`, `move_head`, `display_image`, `change_led`),
+>   `get_world`, and `get_last_view`;
+> - per-motor **locks** + async offload added for real concurrency.
+>
+> The analysis below is kept as the original reasoning; treat specifics as of Phase 1.
+
 Pre-build analysis for `ponder_multi_agent`. **No code written yet.** This documents the
 capabilities I will wrap from the two reference codebases and how I propose to expose them
 as a standalone MCP server. It ends with open decisions I need you to confirm before I build.

@@ -21,10 +21,10 @@ def _read_log(path):
 
 
 # --------------------------------------------------------------------- Test 1: all tools
-def test_all_17_tools_callable_and_shaped(stub_env):
+def test_all_19_tools_callable_and_shaped(stub_env):
     from robot_tools import tools
 
-    assert len(tools.ALL_TOOLS) == 17
+    assert len(tools.ALL_TOOLS) == 19
 
     # movement
     r = tools.move_forward(2.0)
@@ -41,6 +41,7 @@ def test_all_17_tools_callable_and_shaped(stub_env):
     assert tools.move_head(pitch=-10)["ok"] is True
     assert tools.display_image("e_Joy.jpg")["ok"] is True
     assert tools.change_led(0, 255, 0)["ok"] is True
+    assert tools.reset_pose(hold_seconds=0)["ok"] is True
 
     # speech (friction_type required)
     s = tools.speak("hello", friction_type="none")
@@ -49,8 +50,13 @@ def test_all_17_tools_callable_and_shaped(stub_env):
     # vision
     cv = tools.capture_view()
     assert cv["ok"] is True and isinstance(cv["image"], str) and cv["image"]
+    lv = tools.get_last_view()   # after capture_view -> 1 cached frame
+    assert lv["ok"] is True and len(lv["frames"]) == 1 and lv["frames"][0]["direction"] == "front"
     fo = tools.find_object("bag")
     assert fo["ok"] is True and len(fo["frames"]) == 4
+    lv2 = tools.get_last_view()  # after a 360 scan -> all 4 cached frames
+    assert len(lv2["frames"]) == 4 and [f["direction"] for f in lv2["frames"]] == \
+        ["front", "left", "back", "right"]
 
     # world memory
     assert tools.get_known_location("nothing-known") is None
@@ -64,8 +70,9 @@ def test_all_17_tools_callable_and_shaped(stub_env):
     tool_names = {e["name"] for e in log}
     for name in ["move_forward", "move_backward", "strafe_left", "strafe_right",
                  "turn_left", "turn_right", "stop", "move_arm", "move_head",
-                 "display_image", "change_led", "speak", "capture_view", "find_object",
-                 "get_known_location", "update_world", "get_world"]:
+                 "display_image", "change_led", "reset_pose", "speak", "capture_view",
+                 "get_last_view", "find_object", "get_known_location", "update_world",
+                 "get_world"]:
         assert name in tool_names, f"{name} not logged"
 
 

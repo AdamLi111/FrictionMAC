@@ -107,6 +107,13 @@ async def change_led(red: int = 0, green: int = 0, blue: int = 0) -> dict:
     return await _off(tools.change_led, red, green, blue)
 
 
+@mcp.tool()
+async def reset_pose(hold_seconds: float = 2.0) -> dict:
+    """Hold the current expression for `hold_seconds`, then return the robot to neutral (arms
+    down, head level, default face, LED off). Call after an expression so it doesn't stay stuck."""
+    return await _off(tools.reset_pose, hold_seconds)
+
+
 # ---- speech (one tool; friction_type required) ----
 @mcp.tool()
 async def speak(text: str, friction_type: str) -> dict:
@@ -124,6 +131,24 @@ async def capture_view():
     if not r.get("ok"):
         return f"capture_view failed: {r.get('error')}"
     return _frame_content(r.get("image"), "front view")
+
+
+@mcp.tool()
+async def get_last_view():
+    """Return the frames from the MOST RECENT capture as viewable image content, WITHOUT
+    capturing anew (no camera trigger, no motor): one frame from a capture_view, or all four
+    views from a 360° find_object scan."""
+    r = await _off(tools.get_last_view)
+    if not r.get("ok"):
+        return f"get_last_view failed: {r.get('error')}"
+    frames = r.get("frames") or []
+    if not frames:
+        return "No frames have been captured yet."
+    out = [f"Most recent capture — {len(frames)} view(s), no new scan:"]
+    for fr in frames:
+        out.append(f"View: {fr['direction']}")
+        out.append(_frame_content(fr["image"], fr["direction"]))
+    return out
 
 
 @mcp.tool()

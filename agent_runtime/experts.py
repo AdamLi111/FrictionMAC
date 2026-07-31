@@ -4,17 +4,14 @@ files and scoped to exactly the robot tools each may call. Behavior lives in the
 files, not here.
 
 Clusters:
-  World-Understanding : object-lookup, map, disambiguation   (perception shared by all three)
+  World-Understanding : object-lookup (the sole perceiver), map (owns the world model +
+                        disambiguation)
   Action-Space        : navigation, expression
   Dialogue-Management : regular-utterance, friction
 """
 from claude_agent_sdk import AgentDefinition
 
 from agent_runtime import config
-
-# Perception is shared across the whole World-Understanding cluster (per the design): every
-# WU agent can look, and decides for itself whether it needs to.
-PERCEPTION = ("find_object", "capture_view")
 
 
 def _rt(*names):
@@ -25,29 +22,22 @@ def build_agents() -> dict:
     return {
         # ---------------- World-Understanding cluster ----------------
         "object-lookup": AgentDefinition(
-            description=("Locates/verifies an object for the Director, from world memory AND "
-                         "the camera, and reports where it is (view, direction, approx "
-                         "distance, obstacles). Use to find or check on a target."),
+            description=("The sole perceiver. Locates/verifies an object for the Director, from "
+                         "world memory AND the camera (find_object/capture_view), and reports "
+                         "where it is (view, direction, approx distance, obstacles)."),
             prompt=config.read_steering("object_lookup.md"),
-            tools=_rt("get_known_location", *PERCEPTION),
+            tools=_rt("get_known_location", "find_object", "capture_view"),
             mcpServers=[config.ROBOT_SERVER],
             model="inherit",
         ),
         "map": AgentDefinition(
-            description=("Owns the world model: decides what is worth remembering and writes "
-                         "it with update_world, keeping one canonical schema, no duplicates, "
-                         "and shared properties (e.g. room) consistent across entries."),
+            description=("Owns the world model — records what was just seen accurately and "
+                         "consistently (canonical schema, no duplicates, shared props like "
+                         "room kept consistent), and answers whether a referenced target is "
+                         "AMBIGUOUS (multiple candidates of the same category) via get_world. "
+                         "Reads the latest captured image with get_last_view; does NOT scan."),
             prompt=config.read_steering("map.md"),
-            tools=_rt("update_world", "get_world", "get_known_location", *PERCEPTION),
-            mcpServers=[config.ROBOT_SERVER],
-            model="inherit",
-        ),
-        "disambiguation": AgentDefinition(
-            description=("Decides whether a referenced target is ambiguous — e.g. two mugs of "
-                         "different colours known/seen — and reports CLEAR or AMBIGUOUS with "
-                         "the candidates. Reads the world model and may look."),
-            prompt=config.read_steering("disambiguation.md"),
-            tools=_rt("get_world", "get_known_location", *PERCEPTION),
+            tools=_rt("update_world", "get_world", "get_last_view"),
             mcpServers=[config.ROBOT_SERVER],
             model="inherit",
         ),
@@ -65,7 +55,7 @@ def build_agents() -> dict:
             description=("Conveys emotion/affect by composing arm, head, face-display and LED "
                          "movements. Use for expressive/emotional behaviour."),
             prompt=config.read_steering("expression.md"),
-            tools=_rt("move_arm", "move_head", "display_image", "change_led"),
+            tools=_rt("move_arm", "move_head", "display_image", "change_led", "reset_pose"),
             mcpServers=[config.ROBOT_SERVER],
             model="inherit",
         ),

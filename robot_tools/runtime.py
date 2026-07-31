@@ -42,8 +42,27 @@ def motor_lock(resource: str) -> "threading.Lock":
 _calib = ActionExecutor(None)
 
 
+# Cache of the MOST RECENT capture operation: a list of {"direction", "image"} — one entry
+# for a capture_view, four for a 360° find_object scan. get_last_view() serves this so the map
+# agent can look at everything just seen without triggering a new scan.
+_last_capture = []
+_last_capture_lock = threading.Lock()
+
+
+def set_last_capture(frames):
+    global _last_capture
+    with _last_capture_lock:
+        _last_capture = list(frames)
+
+
+def get_last_capture():
+    with _last_capture_lock:
+        return list(_last_capture)
+
+
 def reset():
     _state.clear()
+    set_last_capture([])
 
 
 def get_logger() -> ToolLogger:

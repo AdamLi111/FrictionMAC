@@ -178,6 +178,24 @@ def change_led(red: int = 0, green: int = 0, blue: int = 0) -> dict:
     return {"ok": True, "rgb": [red, green, blue]}
 
 
+@_tool()
+def reset_pose(hold_seconds: float = 2.0) -> dict:
+    """Hold the current expression for `hold_seconds` (so it's actually seen), then return the
+    robot to a neutral resting pose: arms down, head level, default face, LED off. Call this
+    after an expression so the robot doesn't stay frozen in the pose."""
+    runtime.sleep(max(0.0, hold_seconds))   # let the just-performed expression be seen (no locks held)
+    r = runtime.get_robot()
+    with contextlib.ExitStack() as stack:   # this touches every expression resource at once
+        for res in ("ARM_LEFT", "ARM_RIGHT", "HEAD", "FACE", "LED"):
+            stack.enter_context(runtime.motor_lock(res))
+        r.move_arm(arm="left", position=ARM_MAX, velocity=50, units="degrees")   # arms down
+        r.move_arm(arm="right", position=ARM_MAX, velocity=50, units="degrees")
+        r.move_head(pitch=0, roll=0, yaw=0, velocity=50, units="degrees")         # head level
+        r.display_image(fileName="e_DefaultContent.jpg")                          # default face
+        r.change_led(red=0, green=0, blue=0)                                      # LED off
+    return {"ok": True, "reset": True}
+
+
 # Navigation is no longer a single composite tool. The Director composes primitive
 # movements (turn_* + move_forward, plus strafe/back for obstacle detours) in a
 # perceive -> move -> re-perceive loop instead. (Removed spatial_navigate.)
@@ -210,7 +228,9 @@ def _redact_capture(result):
 @_tool(redact=_redact_capture)
 def capture_view() -> dict:
     """One raw base64 JPEG frame for the agent to reason over. No VLM here."""
-    return {"ok": True, "image": runtime.capture_frame("front")}
+    frame = runtime.capture_frame("front")
+    runtime.set_last_capture([{"direction": "front", "image": frame}])   # cache for get_last_view
+    return {"ok": True, "image": frame}
 
 
 def _redact_find(result):
@@ -241,7 +261,16 @@ def find_object(target_object: str) -> dict:
         # return to the original heading
         r.drive_time(0, 100, runtime.calc_turn_time(90))
         runtime.sleep(2)
+    runtime.set_last_capture(frames)   # cache all 4 views for get_last_view
     return {"ok": True, "target_object": target_object, "frames": frames}
+
+
+@_tool(redact=_redact_find)
+def get_last_view() -> dict:
+    """The frames from the MOST RECENT capture (cached), WITHOUT capturing anew — no camera
+    trigger, no motor: one frame from a capture_view, or all four from a 360° find_object scan.
+    Use to look at everything just seen."""
+    return {"ok": True, "frames": runtime.get_last_capture()}
 
 
 # ----------------------------------------------------------------------- world memory
@@ -270,11 +299,11 @@ ALL_TOOLS = [
     # movement (DRIVE)
     move_forward, move_backward, strafe_left, strafe_right, turn_left, turn_right, stop,
     # expression (ARM/HEAD/FACE/LED)
-    move_arm, move_head, display_image, change_led,
+    move_arm, move_head, display_image, change_led, reset_pose,
     # speech
     speak,
     # vision
-    capture_view, find_object,
+    capture_view, get_last_view, find_object,
     # world memory
     get_known_location, update_world, get_world,
 ]

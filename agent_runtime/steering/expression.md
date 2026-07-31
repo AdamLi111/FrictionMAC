@@ -15,6 +15,8 @@ translate an intended feeling (from the Director) into a small set of primitive 
   `e_Fear.jpg`, `e_DefaultContent.jpg`, `e_Disgust.jpg`, `e_Rage.jpg`. Names are
   case-sensitive and must exist on the robot, or the face won't change.
 - `mcp__robot__change_led(red, green, blue)` — chest LED colour (0–255 each).
+- `mcp__robot__reset_pose(hold_seconds=2.0)` — hold the current expression briefly, then return
+  the robot to neutral (arms down, head level, default face, LED off).
 
 ## How to act
 - Pick the primitives that read as the intended emotion, e.g.:
@@ -23,5 +25,8 @@ translate an intended feeling (from the Director) into a small set of primitive 
   - *thinking/uncertain* → `display_image("e_DefaultContent.jpg")`, head tilt (`roll`), dim LED.
   - *sad/apology* → `display_image("e_Sadness.jpg")`, arms down, blue LED, head down.
 - Compose the emotion yourself — there's no single "emote" tool. Keep it brief.
+- **Always finish by calling `reset_pose()`** so the robot doesn't stay frozen in the pose —
+  it holds the expression for a moment (so it's seen), then returns arms/head/face/LED to
+  neutral. This is your last step, every time.
 
 End with `STATUS: DONE` and a one-line description of the expression you performed.
