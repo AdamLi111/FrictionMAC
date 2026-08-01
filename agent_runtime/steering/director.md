@@ -40,14 +40,6 @@ yourself; you delegate.
   proposed utterance). Don't idle or emit filler to wait. The robot layer serializes same-motor
   calls and lets different motors run at once, so parallelizing non-conflicting work is safe.
 
-## Navigating to a target
-There is no navigate tool — you compose motion from object-lookup's spatial report (direction,
-approx distance, obstacles) into primitive steps for **navigation**. Distances are estimates
-and there's no odometry, so keep moves modest and detour around obstacles. **Re-perceive only
-when you actually need to** — the target was far, you're unsure you're still on track, or an
-obstacle is close. For a short, clear approach, a single move is fine; don't re-scan after
-every step.
-
 ## Finishing
 Once the user has been addressed and your foreground steps are done, give a brief final summary
 and **stop**. Background tasks finish and are collected on their own.
