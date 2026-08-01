@@ -27,16 +27,10 @@ from claude_agent_sdk import (
     ToolUseBlock,
 )
 
-from agent_runtime import config, experts, hooks
+from agent_runtime import architectures, config
 
 DEFAULT_TOOL_LOG = config.DATA_DIR / "agent_tool_calls.jsonl"
 DEFAULT_WORLD_STATE = config.DATA_DIR / "agent_world_state.json"
-
-# Built-in tools the robot Director should never use (it delegates via `Agent` and speaks via
-# the dialogue subagents). Blocking these removes the arbitrary-shell risk and the no-op
-# "spin" tools it previously used to hold a turn open.
-DISALLOWED = ["Bash", "Read", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch",
-              "ScheduleWakeup"]
 
 # Terminal statuses for a background task (from TaskNotification.status / TaskUpdated.patch).
 _TERMINAL = {"completed", "failed", "stopped", "succeeded"}
@@ -44,20 +38,15 @@ POLL_S = 3.0                                      # idle gap that means "no more
 MAX_COLLECT_S = float(os.environ.get("COLLECT_MAX_S", "300"))  # overall safety cap
 
 
-def build_options(tool_log, world_state, scene=None) -> ClaudeAgentOptions:
-    return ClaudeAgentOptions(
-        model="sonnet",
-        cli_path=config.find_cli(),
-        system_prompt=config.read_steering("director.md"),
-        mcp_servers={config.ROBOT_SERVER: config.robot_mcp_config(tool_log, world_state, scene)},
-        agents=experts.build_agents(),
-        allowed_tools=["Agent"] + config.ALL_ROBOT_TOOLS,   # 'Agent' enables delegation
-        disallowed_tools=DISALLOWED,                        # lock the Director to delegation
-        hooks=hooks.build_hooks(),
-        permission_mode="default",
-        setting_sources=[],          # hermetic: ignore ambient .claude/settings.json
-        max_turns=40,
-    )
+def build_options(tool_log, world_state, scene=None, arch=None) -> ClaudeAgentOptions:
+    """Build SDK options for the selected architecture (run option).
+
+    `arch` may be an Architecture name (e.g. "v2"), an Architecture instance, or None — in
+    which case the AGENT_ARCH env var (default "v1") decides. The message-collection loops
+    below are architecture-agnostic, so switching variants changes only this wiring."""
+    if not isinstance(arch, architectures.Architecture):
+        arch = architectures.get(arch)
+    return arch.build_options(tool_log, world_state, scene)
 
 
 def _task_started_id(msg):
@@ -77,7 +66,7 @@ def _task_terminal_id(msg):
     return None
 
 
-async def run(prompt: str, *, tool_log=None, world_state=None, scene=None) -> dict:
+async def run(prompt: str, *, tool_log=None, world_state=None, scene=None, arch=None) -> dict:
     config.load_env()
     config.DATA_DIR.mkdir(exist_ok=True)
     tool_log = tool_log or DEFAULT_TOOL_LOG
@@ -86,7 +75,9 @@ async def run(prompt: str, *, tool_log=None, world_state=None, scene=None) -> di
     seen_tool_uses, final_text = [], None
     pending, started, completed = set(), set(), set()  # background task IDs
     result_seen = False
-    options = build_options(tool_log, world_state, scene)
+    architecture = arch if isinstance(arch, architectures.Architecture) else architectures.get(arch)
+    print(f"[arch] {architecture.name} — {architecture.description}")
+    options = build_options(tool_log, world_state, scene, arch=architecture)
 
     def _handle(message):
         nonlocal final_text, result_seen
@@ -141,9 +132,15 @@ async def run(prompt: str, *, tool_log=None, world_state=None, scene=None) -> di
 
 
 def main():
-    prompt = sys.argv[1] if len(sys.argv) > 1 else "move forward 1 meter"
+    # Usage: python -m agent_runtime.main [--arch v1|v2] "<command>"
+    # (architecture may also be chosen with AGENT_ARCH; the flag wins if given.)
+    argv = sys.argv[1:]
+    arch = None
+    if argv and argv[0] == "--arch":
+        arch, argv = argv[1], argv[2:]
+    prompt = argv[0] if argv else "move forward 1 meter"
     scene = os.environ.get("ROBOT_STUB_SCENE")  # allow scripted scene from env for manual runs
-    anyio.run(lambda: run(prompt, scene=scene))
+    anyio.run(lambda: run(prompt, scene=scene, arch=arch))
 
 
 if __name__ == "__main__":

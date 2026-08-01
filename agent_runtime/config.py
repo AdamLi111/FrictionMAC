@@ -88,3 +88,9 @@ ALL_ROBOT_TOOLS = [robot_tool(n) for n in [
     "capture_view", "get_last_view", "find_object",
     "get_known_location", "update_world", "get_world",
 ]]
+
+# Built-in tools no coordinator/expert should ever use (arbitrary-shell / filesystem /
+# web / scheduling). Shared by every architecture; each arch decides its delegation tools
+# on top of this. Kept here (not in main.py) so all architectures reference one list.
+DISALLOWED_BUILTINS = ["Bash", "Read", "Write", "Edit", "NotebookEdit", "WebFetch",
+                       "WebSearch", "ScheduleWakeup"]

@@ -1,7 +1,11 @@
 """
-The seven domain-expert subagents, grouped into three clusters, built from their steering
-files and scoped to exactly the robot tools each may call. Behavior lives in the steering
-files, not here.
+The six domain-expert subagents, grouped into three clusters, scoped to exactly the robot
+tools each may call. Behavior lives in the steering files, not here.
+
+Two builders, one per architecture (each reads its own self-contained steering directory):
+  build_agents()    -> V1 experts (steering/v1/*.md): propose->approve->speak, no peer talk.
+  build_agents_v2() -> V2 experts (steering/v2/*.md): named teammates that SendMessage peers,
+                       no approval; +SendMessage/ToolSearch on top of their robot tools.
 
 Clusters:
   World-Understanding : object-lookup (the sole perceiver), map (owns the world model +
@@ -13,9 +17,60 @@ from claude_agent_sdk import AgentDefinition
 
 from agent_runtime import config
 
+# Coordination tools every teams-mode agent needs: SendMessage (talk to a named teammate;
+# it is a deferred tool the agent loads via ToolSearch on first use) and ToolSearch itself.
+TEAM_TOOLS = ["SendMessage", "ToolSearch"]
+
 
 def _rt(*names):
     return [config.robot_tool(n) for n in names]
+
+
+def build_agents_v2() -> dict:
+    """The six experts for V2 (teams mode). Each reads its OWN self-contained steering file
+    under steering/v2/ — the teamwork behavior (named teammate, SendMessage peers, no approval)
+    is written into each file, not injected here — and gains SendMessage/ToolSearch on top of
+    its robot tools. Managers are added separately (see managers.py)."""
+    def expert(name, steering, tools):
+        return AgentDefinition(
+            description=_V2_DESCRIPTIONS[name],
+            prompt=config.read_steering(steering),
+            tools=tools + TEAM_TOOLS,
+            mcpServers=[config.ROBOT_SERVER],
+            model="inherit",
+        )
+
+    return {
+        # ---- World-Understanding cluster (manager: world-manager) ----
+        "object-lookup": expert("object-lookup", "v2/object_lookup.md",
+            _rt("get_known_location", "find_object", "capture_view")),
+        "map": expert("map", "v2/map.md",
+            _rt("update_world", "get_world", "get_last_view")),
+        # ---- Action-Space cluster (manager: action-manager) ----
+        "navigation": expert("navigation", "v2/navigation.md",
+            _rt("move_forward", "move_backward", "strafe_left", "strafe_right",
+                "turn_left", "turn_right", "stop")),
+        "expression": expert("expression", "v2/expression.md",
+            _rt("move_arm", "move_head", "display_image", "change_led", "reset_pose")),
+        # ---- Dialogue-Management cluster (manager: dialogue-manager) ----
+        "regular-utterance": expert("regular-utterance", "v2/regular_utterance.md", _rt("speak")),
+        "friction": expert("friction", "v2/friction.md", _rt("speak")),
+    }
+
+
+_V2_DESCRIPTIONS = {
+    "object-lookup": ("The sole perceiver. Locates/verifies an object from world memory AND the "
+                      "camera and reports where it is (view, direction, approx distance, obstacles)."),
+    "map": ("Owns the world model — records what was seen and judges whether a referenced target "
+            "is AMBIGUOUS. Reads the latest captured image; does NOT scan."),
+    "navigation": ("Executes primitive movement steps (move/turn/strafe/stop) and reports DONE "
+                   "or INFEASIBLE."),
+    "expression": ("Conveys emotion/affect via arm, head, face-display and LED movements."),
+    "regular-utterance": ("Speaks a NORMAL reply (confirmations, answers, status) directly."),
+    "friction": ("Speaks a POSITIVE-FRICTION utterance (clarify / reveal assumption / pause / "
+                 "etc.) directly, with the right friction_type; also voices user-facing "
+                 "clarifying questions escalated up the chain."),
+}
 
 
 def build_agents() -> dict:
@@ -25,7 +80,7 @@ def build_agents() -> dict:
             description=("The sole perceiver. Locates/verifies an object for the Director, from "
                          "world memory AND the camera (find_object/capture_view), and reports "
                          "where it is (view, direction, approx distance, obstacles)."),
-            prompt=config.read_steering("object_lookup.md"),
+            prompt=config.read_steering("v1/object_lookup.md"),
             tools=_rt("get_known_location", "find_object", "capture_view"),
             mcpServers=[config.ROBOT_SERVER],
             model="inherit",
@@ -36,7 +91,7 @@ def build_agents() -> dict:
                          "room kept consistent), and answers whether a referenced target is "
                          "AMBIGUOUS (multiple candidates of the same category) via get_world. "
                          "Reads the latest captured image with get_last_view; does NOT scan."),
-            prompt=config.read_steering("map.md"),
+            prompt=config.read_steering("v1/map.md"),
             tools=_rt("update_world", "get_world", "get_last_view"),
             mcpServers=[config.ROBOT_SERVER],
             model="inherit",
@@ -45,7 +100,7 @@ def build_agents() -> dict:
         "navigation": AgentDefinition(
             description=("Executes the primitive movement steps the Director specifies "
                          "(move/turn/strafe/stop) and reports DONE or INFEASIBLE."),
-            prompt=config.read_steering("navigation.md"),
+            prompt=config.read_steering("v1/navigation.md"),
             tools=_rt("move_forward", "move_backward", "strafe_left", "strafe_right",
                       "turn_left", "turn_right", "stop"),
             mcpServers=[config.ROBOT_SERVER],
@@ -54,7 +109,7 @@ def build_agents() -> dict:
         "expression": AgentDefinition(
             description=("Conveys emotion/affect by composing arm, head, face-display and LED "
                          "movements. Use for expressive/emotional behaviour."),
-            prompt=config.read_steering("expression.md"),
+            prompt=config.read_steering("v1/expression.md"),
             tools=_rt("move_arm", "move_head", "display_image", "change_led", "reset_pose"),
             mcpServers=[config.ROBOT_SERVER],
             model="inherit",
@@ -63,7 +118,7 @@ def build_agents() -> dict:
         "regular-utterance": AgentDefinition(
             description=("Composes a NORMAL spoken reply (confirmations, answers, status). "
                          "Proposes the text to the Director; speaks only once approved."),
-            prompt=config.read_steering("regular_utterance.md"),
+            prompt=config.read_steering("v1/regular_utterance.md"),
             tools=_rt("speak"),
             mcpServers=[config.ROBOT_SERVER],
             model="inherit",
@@ -72,7 +127,7 @@ def build_agents() -> dict:
             description=("Composes a POSITIVE-FRICTION utterance (clarify / reveal assumption "
                          "/ pause / etc.) with the right friction_type. Proposes it to the "
                          "Director; speaks only once approved."),
-            prompt=config.read_steering("friction.md"),
+            prompt=config.read_steering("v1/friction.md"),
             tools=_rt("speak"),
             mcpServers=[config.ROBOT_SERVER],
             model="inherit",

@@ -8,7 +8,8 @@ two Python environments, talking over MCP:
   the robot env (`.venv`).
 - **`agent_runtime/`** — a **Director** agent that delegates to six domain-expert subagents,
   connected to the robot MCP server. Runs in the agent env (`.venv-agent`, Python ≥3.10, has
-  `claude-agent-sdk`).
+  `claude-agent-sdk`). Ships **two selectable architectures** (see below); pick one with
+  `AGENT_ARCH`.
 
 Robot access has two modes, chosen by `MISTY_IP`: **real** (fails loudly if unreachable) or
 **stub** (`ROBOT_STUB=1`, or simply no `MISTY_IP` — fakes all robot calls for offline dev).
@@ -47,6 +48,32 @@ Robot access has two modes, chosen by `MISTY_IP`: **real** (fails loudly if unre
 Behavior lives in the steering files under [`agent_runtime/steering/`](agent_runtime/steering/),
 not in code.
 
+## Architectures (run options)
+
+The multi-agent **topology** is a selectable "run option", chosen with the `AGENT_ARCH` env var
+(default `v1`) and honored by both entry points. Each variant is an `Architecture` subclass in
+[`agent_runtime/architectures/`](agent_runtime/architectures/) registered in that package's
+`__init__.py`; the message-collection harness is architecture-agnostic, so adding a variant
+touches nothing else. New variants (V3, …) drop in as another subclass + registry entry.
+
+| `AGENT_ARCH` | Topology | Notes |
+|---|---|---|
+| `v1` (default) | **Flat:** Director → 6 experts (3 clusters) | Original design. Only experts actuate; speech is gated propose → approve → speak. |
+| `v2` | **Managers:** Director → 3 Domain Managers → 6 experts, as a live agent **team** | A mid-layer of Domain Managers (World-Understanding / Action-Space / Dialogue) parses and re-delegates. All 9 agents are **named, persistent teammates in one team**: any can talk to any other directly via **`SendMessage`** (manager↔manager, expert↔expert, and expert→manager→Director→friction→user info-requests). Managers coordinate only (no robot tools); actuation stays at the experts. **No approval gate.** |
+
+- **v2 requires CLI agent-teams mode**, which the architecture enables automatically by setting
+  `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` on the CLI subprocess (env flag only — the
+  `--agent-teams` flag is rejected in headless mode). Verified working on **CLI 2.1.211 + SDK
+  0.2.120**; reproduce with [`scripts/team_probe.py`](scripts/team_probe.py), a self-contained
+  round-trip test of live peer messaging.
+- v2 raises the top-level turn budget and the subagent spawn depth
+  (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=4`) for the extra tier.
+- The one hop that is **not** a `SendMessage` is manager → Director escalation: a manager that
+  needs the user consulted finishes its task with `STATUS: NEED_USER_INFO: <question>`, which the
+  Director resolves (via the dialogue-manager → friction → user), then re-delegates — the same
+  reliable return-and-continue channel V1 uses, since the Director is the team lead rather than a
+  named teammate.
+
 ## Run
 
 ```bash
@@ -60,6 +87,11 @@ LOG_LEVEL=INFO       .venv-agent/bin/python -m scripts.hw_console    # stub (no 
 
 # single command (one-shot):
 MISTY_IP=172.20.10.2 .venv-agent/bin/python -m agent_runtime.main "go to the mug"
+
+# choose the architecture (default v1); works for main and hw_console:
+AGENT_ARCH=v2 .venv-agent/bin/python -m agent_runtime.main "go to the mug"
+.venv-agent/bin/python -m agent_runtime.main --arch v2 "go to the mug"   # flag also works
+AGENT_ARCH=v2 .venv-agent/bin/python -m scripts.hw_console               # interactive, v2
 ```
 
 `LOG_LEVEL` (`INFO` | `DEBUG` | `FULL`, default `DEBUG`) sets the transcript verbosity written
@@ -69,6 +101,7 @@ to `data/hw_session_<ts>.<level>.log`. The console shows only your input and Mis
 
 | Var | Meaning | Default |
 |---|---|---|
+| `AGENT_ARCH` | architecture / run option (`v1` flat, `v2` managers) | `v1` |
 | `MISTY_IP` | Robot address → **real** mode | unset → stub |
 | `ROBOT_STUB` | `1` = stub mode (robot-layer only) | unset |
 | `ROBOT_STUB_SCENE` | dir of `<direction>.jpg` frames the stub serves (perception tests) | unset |
