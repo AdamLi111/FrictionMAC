@@ -25,6 +25,7 @@ Type 'quit' (or Ctrl-C) to end.
 """
 import math
 import os
+import sys
 import time
 
 import anyio
@@ -203,6 +204,17 @@ async def _collect_turn(recv, logs, sess) -> bool:
 async def run():
     config.load_env()
     config.DATA_DIR.mkdir(exist_ok=True)
+
+    # Robot target: real @ DEFAULT_MISTY_IP by default (no MISTY_IP needed); --stub for offline.
+    # Preflight the connection BEFORE opening the SDK client so an unreachable robot (e.g. wrong
+    # Wi-Fi) aborts immediately without spending API tokens.
+    ip = config.select_robot_target(stub="--stub" in sys.argv[1:])
+    try:
+        config.preflight_robot(ip)
+    except config.RobotUnreachable as e:
+        print(f"\n[abort] {e}")
+        return
+
     stamp = time.strftime("%Y%m%d_%H%M%S")
 
     level = os.environ.get("LOG_LEVEL", "DEBUG").upper()
@@ -217,9 +229,8 @@ async def run():
     logs = Logs(transcript, level)
     sess = {"labels": {}, "done": set()}   # session-wide task tracking (cross-turn dedup)
 
-    ip = os.environ.get("MISTY_IP")
-    mode = f"REAL robot (MISTY_IP={ip})" if ip else \
-        "STUB (no physical movement — set MISTY_IP to use the real robot)"
+    mode = f"REAL robot @ {ip}" if ip else \
+        "STUB (no physical movement — omit --stub to use the real robot)"
     print(f"── Misty console ──  mode: {mode}  |  log level: {level}")
     print("Type a command and press Enter. 'quit' to end.\n")
     logs.emit("INFO", f"[session start] mode={mode} level={level}")

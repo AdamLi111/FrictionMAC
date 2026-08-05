@@ -32,6 +32,7 @@ def _tool_names(log_path: Path):
 
 
 def _run(prompt, tag, scene=None):
+    config.select_robot_target(stub=True)   # these are STUB-robot tests; never touch real hardware
     tool_log = config.DATA_DIR / f"step4_{tag}.jsonl"
     world = config.DATA_DIR / f"step4_{tag}_world.json"
     events = config.DATA_DIR / f"step4_{tag}_events.jsonl"

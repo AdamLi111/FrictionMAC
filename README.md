@@ -82,17 +82,24 @@ python -m venv .venv        && .venv/bin/pip install -e .            # robot env
 python -m venv .venv-agent  && .venv-agent/bin/pip install claude-agent-sdk
 
 # interactive console (real conversation with Misty; type commands, see what it says):
-MISTY_IP=172.20.10.2 .venv-agent/bin/python -m scripts.hw_console
-LOG_LEVEL=INFO       .venv-agent/bin/python -m scripts.hw_console    # stub (no movement)
+# Real robot at 172.20.10.2 is the DEFAULT — no MISTY_IP needed. Add --stub for offline.
+.venv-agent/bin/python -m scripts.hw_console
+.venv-agent/bin/python -m scripts.hw_console --stub    # stub (no robot, no movement)
 
 # single command (one-shot):
-MISTY_IP=172.20.10.2 .venv-agent/bin/python -m agent_runtime.main "go to the mug"
+.venv-agent/bin/python -m agent_runtime.main "go to the mug"
 
 # choose the architecture (default v1); works for main and hw_console:
 AGENT_ARCH=v2 .venv-agent/bin/python -m agent_runtime.main "go to the mug"
 .venv-agent/bin/python -m agent_runtime.main --arch v2 "go to the mug"   # flag also works
 AGENT_ARCH=v2 .venv-agent/bin/python -m scripts.hw_console               # interactive, v2
 ```
+
+Both entry points **preflight the robot connection** before starting the agent: in real mode
+they check Misty is reachable at its IP, and if not (e.g. the robot is on a different Wi-Fi),
+they **abort immediately with an error and spend zero API tokens**. Override the address with
+`MISTY_IP=<ip>` if it ever differs from the default; use `--stub` (or `ROBOT_STUB=1`) to run
+fully offline.
 
 `LOG_LEVEL` (`INFO` | `DEBUG` | `FULL`, default `DEBUG`) sets the transcript verbosity written
 to `data/hw_session_<ts>.<level>.log`. The console shows only your input and Misty's speech.
@@ -102,8 +109,8 @@ to `data/hw_session_<ts>.<level>.log`. The console shows only your input and Mis
 | Var | Meaning | Default |
 |---|---|---|
 | `AGENT_ARCH` | architecture / run option (`v1` flat, `v2` managers) | `v1` |
-| `MISTY_IP` | Robot address → **real** mode | unset → stub |
-| `ROBOT_STUB` | `1` = stub mode (robot-layer only) | unset |
+| `MISTY_IP` | Robot address; real mode is the default at this IP (override only if it differs) | `172.20.10.2` |
+| `ROBOT_STUB` | `1` = offline stub (same as `--stub` on the entry points) | unset → real |
 | `ROBOT_STUB_SCENE` | dir of `<direction>.jpg` frames the stub serves (perception tests) | unset |
 | `FRICTION_OFF` | `1` = gate positive-friction utterances (ablation) | unset (friction on) |
 | `LOG_LEVEL` | console transcript level: `INFO`/`DEBUG`/`FULL` | `DEBUG` |

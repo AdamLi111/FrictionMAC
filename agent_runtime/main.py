@@ -69,6 +69,10 @@ def _task_terminal_id(msg):
 async def run(prompt: str, *, tool_log=None, world_state=None, scene=None, arch=None) -> dict:
     config.load_env()
     config.DATA_DIR.mkdir(exist_ok=True)
+    # In REAL mode (MISTY_IP set), verify the robot is reachable BEFORE starting the SDK client
+    # so an unreachable robot fails fast without spending tokens. Skipped in stub mode
+    # (MISTY_IP unset), so stub tests are unaffected. Raises config.RobotUnreachable on failure.
+    config.preflight_robot()
     tool_log = tool_log or DEFAULT_TOOL_LOG
     world_state = world_state or DEFAULT_WORLD_STATE
 
@@ -132,14 +136,29 @@ async def run(prompt: str, *, tool_log=None, world_state=None, scene=None, arch=
 
 
 def main():
-    # Usage: python -m agent_runtime.main [--arch v1|v2] "<command>"
-    # (architecture may also be chosen with AGENT_ARCH; the flag wins if given.)
+    # Usage: python -m agent_runtime.main [--arch v1|v2] [--stub] "<command>"
+    #   - architecture may also be chosen with AGENT_ARCH; the flag wins if given.
+    #   - real robot at DEFAULT_MISTY_IP by default (no MISTY_IP needed); --stub for offline.
     argv = sys.argv[1:]
-    arch = None
-    if argv and argv[0] == "--arch":
-        arch, argv = argv[1], argv[2:]
+    arch, stub = None, False
+    while argv and argv[0].startswith("--"):
+        if argv[0] == "--arch":
+            arch, argv = argv[1], argv[2:]
+        elif argv[0] == "--stub":
+            stub, argv = True, argv[1:]
+        else:
+            break
     prompt = argv[0] if argv else "move forward 1 meter"
     scene = os.environ.get("ROBOT_STUB_SCENE")  # allow scripted scene from env for manual runs
+
+    ip = config.select_robot_target(stub=stub)   # default to real 172.20.10.2 unless --stub
+    print(f"[robot] {'STUB (offline)' if ip is None else f'REAL @ {ip}'}")
+    try:
+        config.load_env()
+        config.preflight_robot(ip)               # fail fast (before tokens) if unreachable
+    except config.RobotUnreachable as e:
+        print(f"\n[abort] {e}")
+        sys.exit(1)
     anyio.run(lambda: run(prompt, scene=scene, arch=arch))
 
 
