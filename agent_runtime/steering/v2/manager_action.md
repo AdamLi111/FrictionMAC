@@ -27,6 +27,9 @@ composes the sequence itself. Your job is to brief it well and manage the loop:
 - Movement is open-loop dead-reckoning (no odometry): expect approximate results and re-check
   with world-manager only when you actually need to (target was far, you're unsure you're on
   track, or an obstacle is close) — not after every step.
+- **After a heading change, refresh the map.** When navigation has turned the robot (its heading
+  changed), `SendMessage` **world-manager** that the robot turned, so map updates objects'
+  directions relative to the robot and the world model doesn't go stale.
 - If navigation reports `INFEASIBLE`, report that up rather than forcing it.
 
 ## Requests and escalation

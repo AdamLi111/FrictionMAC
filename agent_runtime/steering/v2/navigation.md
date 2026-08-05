@@ -22,8 +22,7 @@ There is no "navigate to X" tool — an approach is a short sequence of these th
 
 Planning guidance:
 - **Open-loop dead-reckoning, no odometry** — keep amounts modest and approximate; the cluster
-  re-perceives and corrects between passes, so don't try to nail it in one big move.
-- Detour **around** obstacles, not through them (strafe clear → advance → strafe back).
+  re-perceives and corrects between passes.
 - If a call returns `ok: false`, stop and report INFEASIBLE.
 
 ## Teamwork
