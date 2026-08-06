@@ -79,6 +79,35 @@ async def tool_logger(input_data, tool_use_id, context):
     return {}
 
 
+# --- delegation gate: block the general-purpose fallback ---
+# The `Agent` tool defaults to the built-in `general-purpose` agent (full tools: filesystem,
+# shell, web) when `subagent_type` is omitted or unknown. That is never intended here, so deny
+# any delegation whose subagent_type isn't one of the architecture's defined agents. A malformed
+# delegation then fails LOUDLY (with a corrective message) instead of silently spawning a
+# capable rogue agent that could read the repo.
+def make_agent_gate(valid_agents):
+    valid = set(valid_agents or ())
+
+    async def agent_gate(input_data, tool_use_id, context):
+        st = (input_data.get("tool_input") or {}).get("subagent_type")
+        if st in valid:
+            return {}  # allow: a defined agent
+        _log_event({"event": "agent_gate_deny", "requested_subagent_type": st,
+                    "agent_type": input_data.get("agent_type"), "valid": sorted(valid)})
+        return {"hookSpecificOutput": {
+            "hookEventName": input_data["hook_event_name"],
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                f"Invalid delegation: subagent_type={st!r} is not one of the defined agents "
+                f"{sorted(valid)}. You MUST set `subagent_type` explicitly to one of these. Do "
+                f"NOT omit it — an omitted or unknown type would spawn the generic "
+                f"`general-purpose` agent, which is not allowed here. Re-issue the `Agent` call "
+                f"with a valid `subagent_type`."),
+        }}
+
+    return agent_gate
+
+
 # --- routing logger (Director's delegation) ---
 async def subagent_start(input_data, tool_use_id, context):
     _log_event({"event": "subagent_start", "agent_type": input_data.get("agent_type"),
@@ -92,12 +121,19 @@ async def subagent_stop(input_data, tool_use_id, context):
     return {}
 
 
-def build_hooks() -> dict:
+def build_hooks(valid_agents=None) -> dict:
+    """Build the hook set. `valid_agents` is the set of delegatable agent names for the active
+    architecture; when non-empty, a PreToolUse gate on the `Agent`/`Task` tool denies any
+    delegation whose subagent_type isn't in it (blocking the general-purpose fallback)."""
+    pre = [
+        HookMatcher(matcher=SPEAK, hooks=[friction_gate]),   # inert friction gate
+        HookMatcher(matcher="^mcp__", hooks=[tool_logger]),  # all robot tools
+    ]
+    if valid_agents:
+        pre.append(HookMatcher(matcher="^(Agent|Task)$",     # the delegation tool
+                               hooks=[make_agent_gate(valid_agents)]))
     return {
-        "PreToolUse": [
-            HookMatcher(matcher=SPEAK, hooks=[friction_gate]),   # inert friction gate
-            HookMatcher(matcher="^mcp__", hooks=[tool_logger]),  # all robot tools
-        ],
+        "PreToolUse": pre,
         "SubagentStart": [HookMatcher(hooks=[subagent_start])],
         "SubagentStop": [HookMatcher(hooks=[subagent_stop])],
     }

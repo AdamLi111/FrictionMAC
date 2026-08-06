@@ -68,32 +68,6 @@ def move_backward(distance: float = 1.0) -> dict:
 
 
 @_tool()
-def strafe_left(distance: float = 1.0) -> dict:
-    ms = runtime.calc_drive_time(distance)
-    with runtime.motor_lock("DRIVE"):
-        r = runtime.get_robot()
-        r.drive_time(0, -100, 2150)            # pivot ~45 deg left
-        runtime.sleep(2.5)
-        r.drive_time(50, 0, ms)                # drive forward
-        runtime.sleep(ms / 1000 + 0.5)
-        r.drive_time(0, 100, 2150)             # pivot back
-    return {"ok": True, "duration_ms": ms}
-
-
-@_tool()
-def strafe_right(distance: float = 1.0) -> dict:
-    ms = runtime.calc_drive_time(distance)
-    with runtime.motor_lock("DRIVE"):
-        r = runtime.get_robot()
-        r.drive_time(0, 100, 2150)             # pivot ~45 deg right
-        runtime.sleep(2.5)
-        r.drive_time(50, 0, ms)                # drive forward
-        runtime.sleep(ms / 1000 + 0.5)
-        r.drive_time(0, -100, 2150)            # pivot back
-    return {"ok": True, "duration_ms": ms}
-
-
-@_tool()
 def turn_left(degrees: float) -> dict:
     ms = runtime.calc_turn_time(degrees)
     with runtime.motor_lock("DRIVE"):
@@ -197,8 +171,9 @@ def reset_pose(hold_seconds: float = 2.0) -> dict:
 
 
 # Navigation is no longer a single composite tool. The Director composes primitive
-# movements (turn_* + move_forward, plus strafe/back for obstacle detours) in a
-# perceive -> move -> re-perceive loop instead. (Removed spatial_navigate.)
+# movements (turn_* + move_forward/backward) in a perceive -> move -> re-perceive loop
+# instead. (Removed spatial_navigate; removed strafe_* — a differential-drive base can't
+# strafe cleanly, so it's turn + drive.)
 
 
 # ----------------------------------------------------------------------------- speech
@@ -297,7 +272,7 @@ def get_world() -> dict:
 # Canonical tool set, for server registration and tests.
 ALL_TOOLS = [
     # movement (DRIVE)
-    move_forward, move_backward, strafe_left, strafe_right, turn_left, turn_right, stop,
+    move_forward, move_backward, turn_left, turn_right, stop,
     # expression (ARM/HEAD/FACE/LED)
     move_arm, move_head, display_image, change_led, reset_pose,
     # speech

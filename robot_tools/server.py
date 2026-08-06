@@ -51,18 +51,6 @@ async def move_backward(distance: float = 1.0) -> dict:
 
 
 @mcp.tool()
-async def strafe_left(distance: float = 1.0) -> dict:
-    """Sidestep left `distance` meters (pivot, drive, pivot back)."""
-    return await _off(tools.strafe_left, distance)
-
-
-@mcp.tool()
-async def strafe_right(distance: float = 1.0) -> dict:
-    """Sidestep right `distance` meters (pivot, drive, pivot back)."""
-    return await _off(tools.strafe_right, distance)
-
-
-@mcp.tool()
 async def turn_left(degrees: float) -> dict:
     """Rotate left (counter-clockwise) `degrees` degrees in place."""
     return await _off(tools.turn_left, degrees)

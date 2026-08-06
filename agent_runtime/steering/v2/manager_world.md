@@ -13,12 +13,18 @@ when useful, and answer or escalate the information requests that reach you. You
   it cannot scan), keeps it consistent, tracks each object's direction relative to the robot,
   and judges whether a target is `CLEAR` / `AMBIGUOUS` / `NONE`.
 
+Every `Agent` call must set **`subagent_type`** to `object-lookup` or `map` — never omit it (an
+omitted or unknown type is rejected and would otherwise spawn a generic full-tool agent).
+
 **Spawn these two FRESH for every task — do NOT keep and resume one across captures.** A
 perceiver that ingests camera frames keeps every image in its context; re-using (resuming) the
 same `object-lookup`/`map` would re-send all those frames on each turn and waste tokens. So make
 a **new `Agent` call for each perception/recording task** — they don't persist; each starts
 clean, does its job, and is discarded. (Their peer `SendMessage` talk still works within a run.)
-Use **foreground** when you need the result next; **background** for independent recording work.
+Delegate result-gating work (a lookup/perception you need before you can answer) in the
+**foreground** — pass **`run_in_background: false` explicitly** (an omitted `Agent` call now
+defaults to background and would make you return before the work is done); use
+**`run_in_background: true`** only for independent recording.
 
 ## Typical flow
 1. To locate a target you don't already know, delegate to a fresh **object-lookup** (foreground).

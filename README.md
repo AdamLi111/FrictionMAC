@@ -3,22 +3,22 @@
 A multi-agent robot system for the Misty II, built on the **Claude Agent SDK**. Two layers,
 two Python environments, talking over MCP:
 
-- **`robot_tools/`** — a standalone **MCP server** (18 tools) wrapping Misty's real
+- **`robot_tools/`** — a standalone **MCP server** (17 tools) wrapping Misty's real
   capabilities: movement, expression, speech, vision, and persistent world memory. Runs in
   the robot env (`.venv`).
 - **`agent_runtime/`** — a **Director** agent that delegates to six domain-expert subagents,
   connected to the robot MCP server. Runs in the agent env (`.venv-agent`, Python ≥3.10, has
-  `claude-agent-sdk`). Ships **two selectable architectures** (see below); pick one with
+  `claude-agent-sdk`). Ships **three selectable architectures** (see below); pick one with
   `AGENT_ARCH`.
 
 Robot access has two modes, chosen by `MISTY_IP`: **real** (fails loudly if unreachable) or
 **stub** (`ROBOT_STUB=1`, or simply no `MISTY_IP` — fakes all robot calls for offline dev).
 
-## The 19 robot tools (`mcp__robot__*`)
+## The 17 robot tools (`mcp__robot__*`)
 
 | Group | Tools |
 |---|---|
-| Movement (DRIVE) | `move_forward`, `move_backward`, `strafe_left`, `strafe_right`, `turn_left`, `turn_right`, `stop` |
+| Movement (DRIVE) | `move_forward`, `move_backward`, `turn_left`, `turn_right`, `stop` |
 | Expression (ARM_LEFT/ARM_RIGHT/HEAD/FACE/LED) | `move_arm`, `move_head`, `display_image`, `change_led`, `reset_pose` |
 | Speech | `speak(text, friction_type)` |
 | Vision | `capture_view`, `get_last_view`, `find_object` |
@@ -59,7 +59,8 @@ touches nothing else. New variants (V3, …) drop in as another subclass + regis
 | `AGENT_ARCH` | Topology | Notes |
 |---|---|---|
 | `v1` (default) | **Flat:** Director → 6 experts (3 clusters) | Original design. Only experts actuate; speech is gated propose → approve → speak. |
-| `v2` | **Managers:** Director → 3 Domain Managers → 6 experts, as a live agent **team** | A mid-layer of Domain Managers (World-Understanding / Action-Space / Dialogue) parses and re-delegates. All 9 agents are **named, persistent teammates in one team**: any can talk to any other directly via **`SendMessage`** (manager↔manager, expert↔expert, and expert→manager→Director→friction→user info-requests). Managers coordinate only (no robot tools); actuation stays at the experts. **No approval gate.** |
+| `v2` | **Managers:** Director → 3 Domain Managers → 6 experts, as a live agent **team** | A mid-layer of Domain Managers (World-Understanding / Action-Space / Dialogue) parses and re-delegates. All 9 agents are **named, persistent teammates in one team**: any can talk to any other directly via **`SendMessage`** (manager↔manager, expert↔expert, and expert→manager→Director→friction→user info-requests). Managers coordinate only (no robot tools); actuation stays at the experts. **No approval gate.** The two perceivers (`object-lookup`, `map`) are spawned **fresh per task** (never resumed) so camera frames don't accumulate. |
+| `v3` | **Single agent:** one agent holds **all** the tools and talks to the user directly | No delegation, no subagents, no teams — one agent perceives, reasons, moves, expresses, keeps the world model, and speaks itself. The baseline the multi-agent variants are compared against. |
 
 - **v2 requires CLI agent-teams mode**, which the architecture enables automatically by setting
   `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` on the CLI subprocess (env flag only — the
@@ -108,7 +109,7 @@ to `data/hw_session_<ts>.<level>.log`. The console shows only your input and Mis
 
 | Var | Meaning | Default |
 |---|---|---|
-| `AGENT_ARCH` | architecture / run option (`v1` flat, `v2` managers) | `v1` |
+| `AGENT_ARCH` | architecture / run option (`v1` flat, `v2` managers, `v3` single agent) | `v1` |
 | `MISTY_IP` | Robot address; real mode is the default at this IP (override only if it differs) | `172.20.10.2` |
 | `ROBOT_STUB` | `1` = offline stub (same as `--stub` on the entry points) | unset → real |
 | `ROBOT_STUB_SCENE` | dir of `<direction>.jpg` frames the stub serves (perception tests) | unset |

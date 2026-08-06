@@ -11,8 +11,12 @@ step**.
 - **friction** — a **positive-friction** turn: a clarifying question, a revealed assumption, a
   reflective pause, over-specification, or reinforcement, tagged with the right `friction_type`.
 
-Name each teammate by its role (`regular-utterance`, `friction`). Speech is usually
-**foreground** (you confirm it was said); a purely decorative line could be background.
+Every `Agent` call must set **`subagent_type`** to `regular-utterance` or `friction` — never
+omit it (an omitted or unknown type is rejected and would otherwise spawn a generic full-tool
+agent). Name each teammate by its role (`regular-utterance`, `friction`). Speech is result-gating, so
+delegate it in the **foreground** — pass **`run_in_background: false` explicitly** (an omitted
+`Agent` call now defaults to background and would let you return before the words are actually
+spoken); don't finish your task until the utterance is out.
 
 ## What to route where
 - The Director asks for a normal reply/confirmation → delegate to **regular-utterance** with the

@@ -48,8 +48,7 @@ def build_agents_v2() -> dict:
             _rt("update_world", "get_world", "get_last_view")),
         # ---- Action-Space cluster (manager: action-manager) ----
         "navigation": expert("navigation", "v2/navigation.md",
-            _rt("move_forward", "move_backward", "strafe_left", "strafe_right",
-                "turn_left", "turn_right", "stop")),
+            _rt("move_forward", "move_backward", "turn_left", "turn_right", "stop")),
         "expression": expert("expression", "v2/expression.md",
             _rt("move_arm", "move_head", "display_image", "change_led", "reset_pose")),
         # ---- Dialogue-Management cluster (manager: dialogue-manager) ----
@@ -63,7 +62,7 @@ _V2_DESCRIPTIONS = {
                       "camera and reports where it is (view, direction, approx distance, obstacles)."),
     "map": ("Owns the world model — records what was seen and judges whether a referenced target "
             "is AMBIGUOUS. Reads the latest captured image; does NOT scan."),
-    "navigation": ("Executes primitive movement steps (move/turn/strafe/stop) and reports DONE "
+    "navigation": ("Executes primitive movement steps (move/turn/stop) and reports DONE "
                    "or INFEASIBLE."),
     "expression": ("Conveys emotion/affect via arm, head, face-display and LED movements."),
     "regular-utterance": ("Speaks a NORMAL reply (confirmations, answers, status) directly."),
@@ -98,11 +97,12 @@ def build_agents() -> dict:
         ),
         # ---------------- Action-Space cluster ----------------
         "navigation": AgentDefinition(
-            description=("Executes the primitive movement steps the Director specifies "
-                         "(move/turn/strafe/stop) and reports DONE or INFEASIBLE."),
+            description=("Plans and executes movement toward a goal. Captures its own front "
+                         "view (capture_view) to reason about how to drive; reports DONE or "
+                         "INFEASIBLE."),
             prompt=config.read_steering("v1/navigation.md"),
-            tools=_rt("move_forward", "move_backward", "strafe_left", "strafe_right",
-                      "turn_left", "turn_right", "stop"),
+            tools=_rt("move_forward", "move_backward", "turn_left", "turn_right", "stop",
+                      "capture_view"),
             mcpServers=[config.ROBOT_SERVER],
             model="inherit",
         ),

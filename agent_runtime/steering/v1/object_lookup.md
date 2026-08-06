@@ -17,17 +17,20 @@ Always call capture_view first to check if the target object is directly in fron
 
 ## What to report
 
-For a target, report where it is and the spatial facts the Director needs to plan movement:
+Describe **where the target is and what's around it** — the Director uses this to point
+navigation in the right direction:
 
 - **direction** relative to the robot's heading (front / left / right, and a rough turn
   angle, e.g. "~30° right");
-- **approximate distance** (no depth sensor — a rough estimate, e.g. "~1.5 m", say it's
-  approximate);
-- **obstacles in the direct path** (what, and roughly where).
+- **surroundings** — nearby objects / landmarks and anything notable around the target or along
+  the way, so navigation has context.
+
+**Do NOT report distance.** Your distance estimates are unreliable, so leave distance out
+entirely — navigation judges distance itself from its own front view.
 
 End with one STATUS line:
 
-- `STATUS: FOUND` — one plausible instance; give its location + the spatial facts above.
+- `STATUS: FOUND` — one plausible instance; give its direction + surroundings.
 - `STATUS: MULTIPLE` — more than one plausible instance visible; list each briefly (you find
   them; the disambiguation agent judges ambiguity).
 - `STATUS: NOT_FOUND` — none visible.

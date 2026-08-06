@@ -86,19 +86,20 @@ def robot_tool(name: str) -> str:
 
 
 ALL_ROBOT_TOOLS = [robot_tool(n) for n in [
-    "move_forward", "move_backward", "strafe_left", "strafe_right",
-    "turn_left", "turn_right", "stop",
+    "move_forward", "move_backward", "turn_left", "turn_right", "stop",
     "move_arm", "move_head", "display_image", "change_led", "reset_pose",
     "speak",
     "capture_view", "get_last_view", "find_object",
     "get_known_location", "update_world", "get_world",
 ]]
 
-# Built-in tools no coordinator/expert should ever use (arbitrary-shell / filesystem /
-# web / scheduling). Shared by every architecture; each arch decides its delegation tools
-# on top of this. Kept here (not in main.py) so all architectures reference one list.
-DISALLOWED_BUILTINS = ["Bash", "Read", "Write", "Edit", "NotebookEdit", "WebFetch",
-                       "WebSearch", "ScheduleWakeup"]
+# Built-in tools no coordinator/expert should ever use: arbitrary shell, filesystem
+# read/write/search, web, and scheduling. `Grep`/`Glob` are included so nothing can read the
+# repo (e.g. the steering files) even if a stray full-tool agent were ever spawned. Shared by
+# every architecture; each arch adds its delegation tools on top. Kept here (not in main.py) so
+# all architectures reference one list.
+DISALLOWED_BUILTINS = ["Bash", "Read", "Write", "Edit", "NotebookEdit", "Grep", "Glob",
+                       "WebFetch", "WebSearch", "ScheduleWakeup"]
 
 
 class RobotUnreachable(RuntimeError):

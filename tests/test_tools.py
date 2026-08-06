@@ -21,17 +21,15 @@ def _read_log(path):
 
 
 # --------------------------------------------------------------------- Test 1: all tools
-def test_all_19_tools_callable_and_shaped(stub_env):
+def test_all_17_tools_callable_and_shaped(stub_env):
     from robot_tools import tools
 
-    assert len(tools.ALL_TOOLS) == 19
+    assert len(tools.ALL_TOOLS) == 17
 
     # movement
     r = tools.move_forward(2.0)
     assert r["ok"] is True and isinstance(r["duration_ms"], int)
     assert tools.move_backward(1.0)["ok"] is True
-    assert tools.strafe_left(1.0)["ok"] is True
-    assert tools.strafe_right(1.0)["ok"] is True
     assert tools.turn_left(90)["ok"] is True
     assert tools.turn_right(45)["ok"] is True
     assert tools.stop() == {"ok": True}
@@ -68,7 +66,7 @@ def test_all_19_tools_callable_and_shaped(stub_env):
     # Every call above logged exactly one line; nothing raised.
     log = _read_log(stub_env["log_path"])
     tool_names = {e["name"] for e in log}
-    for name in ["move_forward", "move_backward", "strafe_left", "strafe_right",
+    for name in ["move_forward", "move_backward",
                  "turn_left", "turn_right", "stop", "move_arm", "move_head",
                  "display_image", "change_led", "reset_pose", "speak", "capture_view",
                  "get_last_view", "find_object", "get_known_location", "update_world",

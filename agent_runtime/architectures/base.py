@@ -58,15 +58,19 @@ class Architecture(ABC):
 
     # ---- shared assembly ----
     def build_options(self, tool_log, world_state, scene=None) -> ClaudeAgentOptions:
+        agents = self.agents()
         opts = ClaudeAgentOptions(
             model=self.model,
             cli_path=config.find_cli(),
             system_prompt=self.root_prompt(),
             mcp_servers={config.ROBOT_SERVER: config.robot_mcp_config(tool_log, world_state, scene)},
-            agents=self.agents(),
+            agents=agents,
             allowed_tools=self.allowed_tools(),
             disallowed_tools=self.disallowed_tools(),
-            hooks=hooks.build_hooks(),
+            # Gate delegation to exactly this architecture's agents (blocks the general-purpose
+            # fallback on a typeless/unknown subagent_type). Empty for single-agent V3, which
+            # has no Agent tool anyway.
+            hooks=hooks.build_hooks(valid_agents=set(agents.keys())),
             permission_mode="default",
             setting_sources=[],          # hermetic: ignore ambient .claude/settings.json
             max_turns=self.max_turns,

@@ -305,7 +305,7 @@ class ActionExecutor:
         if speak:
             pass  # narration stripped in tool layer
         
-        turn_time = self._calculate_turn_time(degrees) - 100 if degrees >= 90 else self._calculate_turn_time
+        turn_time = self._calculate_turn_time(degrees) - 180 if degrees >= 90 else self._calculate_turn_time
         self.robot.drive_time(0, 100, turn_time)
         return turn_time
     
@@ -317,7 +317,7 @@ class ActionExecutor:
         if speak:
             pass  # narration stripped in tool layer
         
-        turn_time = self._calculate_turn_time(degrees) - 60 if degrees >= 90 else self._calculate_turn_time
+        turn_time = self._calculate_turn_time(degrees) - 90 if degrees >= 90 else self._calculate_turn_time
         self.robot.drive_time(0, -100, turn_time)
         return turn_time
     

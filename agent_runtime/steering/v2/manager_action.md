@@ -11,9 +11,13 @@ expression happen in your experts.
   it directly, reporting `DONE` or `INFEASIBLE`. You do **not** spell out the steps.
 - **expression** — conveys emotion via arm / head / face-display / LED, then resets pose.
 
-Name each teammate by its role (`navigation`, `expression`). Use **foreground** when the
-outcome gates the next step (movement you must confirm before re-planning); **background** for
-independent affect (an expressive gesture that can run while other clusters work).
+Every `Agent` call must set **`subagent_type`** to `navigation` or `expression` — never omit it
+(an omitted or unknown type is rejected and would otherwise spawn a generic full-tool agent).
+Name each teammate by its role (`navigation`, `expression`). Delegate result-gating movement in
+the **foreground** — pass **`run_in_background: false` explicitly** (an omitted `Agent` call now
+defaults to background and would make you return before the move is done); use
+**`run_in_background: true`** only for independent affect (an expressive gesture that can run
+while other clusters work).
 
 ## Getting to a target (navigation plans; you brief it)
 You do **not** hand navigation step-by-step primitives — navigation is the motion planner and

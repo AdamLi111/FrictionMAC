@@ -42,6 +42,11 @@ SPEAK = config.robot_tool("speak")
 QUIT = {"quit", "exit", "q", ":q"}
 _LEVEL = {"INFO": 0, "DEBUG": 1, "FULL": 2}
 QUIET_S = 2.0   # after the Director finishes, wait this long of silence to drain stragglers
+# Case A only: when a background task completes AFTER the Director already ended a turn, it
+# usually triggers a follow-up turn. Hold the turn open this long for that follow-up before
+# giving up (a completion with no follow-up shouldn't hang). Does NOT apply while the Director
+# is still mid-turn — there we wait for the real ResultMessage (bounded by MAX_COLLECT_S).
+CONTINUATION_GRACE_S = 20.0
 
 
 def _terminal_status(msg):
@@ -131,6 +136,7 @@ def _process(msg, logs, turn, sess):
 
     elif isinstance(msg, ResultMessage):
         turn["result_seen"] = True
+        turn["awaiting_continuation"] = False   # this (possibly follow-up) turn produced its result
         logs.emit("INFO", f"● turn complete ({msg.subtype})")
         if msg.result:
             logs.emit("DEBUG", f"[result] {msg.result}")
@@ -154,6 +160,15 @@ def _process(msg, logs, turn, sess):
                 st = sess["labels"].get(done, "?")
                 mark = "✓" if _terminal_status(msg) in ("completed", "succeeded") else "✗"
                 logs.emit("INFO", f"  {mark} {st} {_terminal_status(msg)}")
+                # Only when this completion lands AFTER the Director already ended its turn
+                # (result_seen) is it the fragmented case (case A): the completion triggers a
+                # follow-up turn, so wait for it (bounded by last_done). If the Director is still
+                # mid-turn (case B — a foreground step it's about to act on), do NOT arm this;
+                # the loop keeps waiting for the real ResultMessage instead of a grace timeout.
+                if turn["result_seen"]:
+                    turn["result_seen"] = False
+                    turn["awaiting_continuation"] = True
+                    turn["last_done"] = time.monotonic()
         logs.emit("FULL", _raw(msg))
 
     else:
@@ -181,7 +196,8 @@ async def _collect_turn(recv, logs, sess) -> bool:
     background task is still pending AND the stream has been quiet for QUIET_S (so trailing
     completions are drained into this turn). Reads the queue (safe to time out), never the raw
     generator."""
-    turn = {"pending": set(), "result_seen": False, "spoke": False}
+    turn = {"pending": set(), "result_seen": False, "spoke": False,
+            "awaiting_continuation": False, "last_done": None}
     t0 = time.monotonic()
     while True:
         if time.monotonic() - t0 > agent_main.MAX_COLLECT_S:
@@ -194,9 +210,21 @@ async def _collect_turn(recv, logs, sess) -> bool:
             except anyio.EndOfStream:
                 break
         if scope.cancelled_caught:                       # quiet for QUIET_S
-            if turn["result_seen"] and not turn["pending"]:
-                break                                    # settled and drained
-            continue                                     # a task is still working
+            if turn["pending"]:
+                continue                                 # a task is still working
+            if turn["result_seen"]:
+                break                                    # Director's turn ended, nothing pending → done
+            if turn["awaiting_continuation"]:
+                # Case A (fragmented): the Director ended a turn and a background completion is
+                # expected to trigger a follow-up. Wait for it, but bound the wait so a completion
+                # with no follow-up can't hang the turn.
+                if turn["last_done"] and time.monotonic() - turn["last_done"] > CONTINUATION_GRACE_S:
+                    break
+                continue
+            # Case B: the Director is still mid-turn (no ResultMessage yet), just paused between
+            # steps (e.g. reviewing a proposed plan — model-generation latency). Keep waiting for
+            # its real ResultMessage; do NOT end on a timer (that truncated the turn before).
+            continue
         _process(msg, logs, turn, sess)
     return turn["spoke"]
 

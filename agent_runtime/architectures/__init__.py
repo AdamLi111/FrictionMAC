@@ -14,10 +14,12 @@ import os
 from agent_runtime.architectures.base import Architecture
 from agent_runtime.architectures.v1_flat import FlatArchitecture
 from agent_runtime.architectures.v2_managers import DomainManagerArchitecture
+from agent_runtime.architectures.v3_single import SingleAgentArchitecture
 
 _REGISTRY: dict[str, type[Architecture]] = {
     FlatArchitecture.name: FlatArchitecture,
     DomainManagerArchitecture.name: DomainManagerArchitecture,
+    SingleAgentArchitecture.name: SingleAgentArchitecture,
 }
 
 DEFAULT_ARCH = "v1"
