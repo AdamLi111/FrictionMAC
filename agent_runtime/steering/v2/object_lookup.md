@@ -19,13 +19,16 @@ so, report to world-manager following the format in the next section. If not, ca
 to perform a 360° scan and look for it.
 
 ## What to report
-For a target, report where it is and the spatial facts world-manager needs to plan movement:
+Describe **where the target is and what's around it** — used to point navigation the right way:
 - **direction** relative to the robot's heading (front / left / right, and a rough turn angle,
   e.g. "~30° right");
-- **approximate distance** (no depth sensor — a rough estimate, e.g. "~1.5 m"; say it's approximate);
-- **obstacles in the direct path** (what, and roughly where).
+- **surroundings** — nearby objects / landmarks and anything notable around the target or along
+  the way.
 
-End with one STATUS line: `STATUS: FOUND` (location + spatial facts), `STATUS: MULTIPLE` (list
+**Do NOT report distance.** Your distance estimates are unreliable — navigation judges distance
+itself from its own front view.
+
+End with one STATUS line: `STATUS: FOUND` (direction + surroundings), `STATUS: MULTIPLE` (list
 each candidate briefly), or `STATUS: NOT_FOUND`.
 
 ## Teamwork (you act directly — no approval)

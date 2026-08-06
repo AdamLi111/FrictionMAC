@@ -48,7 +48,8 @@ def build_agents_v2() -> dict:
             _rt("update_world", "get_world", "get_last_view")),
         # ---- Action-Space cluster (manager: action-manager) ----
         "navigation": expert("navigation", "v2/navigation.md",
-            _rt("move_forward", "move_backward", "turn_left", "turn_right", "stop")),
+            _rt("move_forward", "move_backward", "turn_left", "turn_right", "stop",
+                "capture_view")),
         "expression": expert("expression", "v2/expression.md",
             _rt("move_arm", "move_head", "display_image", "change_led", "reset_pose")),
         # ---- Dialogue-Management cluster (manager: dialogue-manager) ----
@@ -62,8 +63,8 @@ _V2_DESCRIPTIONS = {
                       "camera and reports where it is (view, direction, approx distance, obstacles)."),
     "map": ("Owns the world model — records what was seen and judges whether a referenced target "
             "is AMBIGUOUS. Reads the latest captured image; does NOT scan."),
-    "navigation": ("Executes primitive movement steps (move/turn/stop) and reports DONE "
-                   "or INFEASIBLE."),
+    "navigation": ("Plans and executes movement toward a goal; captures its own front view "
+                   "(capture_view) to reason about how to drive. Reports DONE or INFEASIBLE."),
     "expression": ("Conveys emotion/affect via arm, head, face-display and LED movements."),
     "regular-utterance": ("Speaks a NORMAL reply (confirmations, answers, status) directly."),
     "friction": ("Speaks a POSITIVE-FRICTION utterance (clarify / reveal assumption / pause / "
