@@ -124,6 +124,11 @@ def _process(msg, logs, turn, sess):
                     logs.emit("INFO", f"Misty: {text}")
                     logs.emit("DEBUG", f"[speak/{inp.get('friction_type', '')}] {text}")
                     turn["spoke"] = True
+                    if inp.get("friction_type") == "probing":
+                        # A probing utterance hands the turn back to the user (a question). Once
+                        # the Director also ends its turn, we return control immediately instead
+                        # of waiting on background work — see _collect_turn.
+                        turn["asked_user"] = True
                 else:
                     logs.emit("DEBUG", f"[tool] {name} input={inp}")
 
@@ -197,7 +202,7 @@ async def _collect_turn(recv, logs, sess) -> bool:
     completions are drained into this turn). Reads the queue (safe to time out), never the raw
     generator."""
     turn = {"pending": set(), "result_seen": False, "spoke": False,
-            "awaiting_continuation": False, "last_done": None}
+            "awaiting_continuation": False, "last_done": None, "asked_user": False}
     t0 = time.monotonic()
     while True:
         if time.monotonic() - t0 > agent_main.MAX_COLLECT_S:
@@ -209,6 +214,14 @@ async def _collect_turn(recv, logs, sess) -> bool:
                 msg = await recv.receive()
             except anyio.EndOfStream:
                 break
+        if not scope.cancelled_caught:
+            _process(msg, logs, turn, sess)
+        # The robot asked the user a question (probing) and the Director ended its turn: hand
+        # control straight back to the user, even if background tasks are still running — they
+        # keep going and are drained on the next turn. (Without this, a pending background
+        # world-model recording would make the user wait to answer the robot's own question.)
+        if turn["asked_user"] and turn["result_seen"]:
+            break
         if scope.cancelled_caught:                       # quiet for QUIET_S
             if turn["pending"]:
                 continue                                 # a task is still working
@@ -225,7 +238,6 @@ async def _collect_turn(recv, logs, sess) -> bool:
             # steps (e.g. reviewing a proposed plan — model-generation latency). Keep waiting for
             # its real ResultMessage; do NOT end on a timer (that truncated the turn before).
             continue
-        _process(msg, logs, turn, sess)
     return turn["spoke"]
 
 

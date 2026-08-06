@@ -11,6 +11,8 @@ concurrently; conflicting ones serialize on the per-motor locks in tools.py/runt
 The logging/redaction/never-raise behavior lives in robot_tools.tools.
 """
 import base64
+import io
+import os
 
 import anyio
 from mcp.server.fastmcp import FastMCP, Image
@@ -25,6 +27,30 @@ async def _off(fn, *args):
     return await anyio.to_thread.run_sync(lambda: fn(*args))
 
 
+def _downscale_jpeg(raw: bytes) -> bytes:
+    """Cap the resolution of a frame BEFORE it goes to the VLM. If IMAGE_MAX_DIM is set (>0),
+    shrink the JPEG so its longest edge is at most that many pixels (aspect ratio preserved,
+    never upscaled) — this bounds per-frame image tokens. No-op when unset/0, when the frame is
+    already within the cap, or on any failure (perception must never break)."""
+    try:
+        max_dim = int(os.environ.get("IMAGE_MAX_DIM", "0"))
+    except ValueError:
+        max_dim = 0
+    if max_dim <= 0:
+        return raw
+    try:
+        from PIL import Image as PILImage
+        im = PILImage.open(io.BytesIO(raw))
+        if max(im.size) <= max_dim:
+            return raw  # already within the cap
+        im.thumbnail((max_dim, max_dim))  # shrink-only, keeps aspect ratio
+        buf = io.BytesIO()
+        im.convert("RGB").save(buf, format="JPEG", quality=85)
+        return buf.getvalue()
+    except Exception:
+        return raw  # on any error, send the original frame rather than fail perception
+
+
 def _frame_content(b64: str, label: str):
     """Return an MCP Image the agent can visually perceive, or a text note when the frame
     isn't a real JPEG (e.g. the inert stub frame with no scripted scene)."""
@@ -33,7 +59,7 @@ def _frame_content(b64: str, label: str):
     except Exception:
         raw = b""
     if raw[:2] == b"\xff\xd8":  # JPEG magic bytes
-        return Image(data=raw, format="jpeg")
+        return Image(data=_downscale_jpeg(raw), format="jpeg")
     return f"{label}: (stub frame — no real image; set ROBOT_STUB_SCENE to script a scene)"
 
 

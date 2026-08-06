@@ -113,6 +113,7 @@ to `data/hw_session_<ts>.<level>.log`. The console shows only your input and Mis
 | `MISTY_IP` | Robot address; real mode is the default at this IP (override only if it differs) | `172.20.10.2` |
 | `ROBOT_STUB` | `1` = offline stub (same as `--stub` on the entry points) | unset → real |
 | `ROBOT_STUB_SCENE` | dir of `<direction>.jpg` frames the stub serves (perception tests) | unset |
+| `IMAGE_MAX_DIM` | cap the longest edge (px) of frames sent to the VLM; `0`/unset = no resize | unset |
 | `FRICTION_OFF` | `1` = gate positive-friction utterances (ablation) | unset (friction on) |
 | `LOG_LEVEL` | console transcript level: `INFO`/`DEBUG`/`FULL` | `DEBUG` |
 | `WORLD_STATE_PATH` / `TOOL_LOG_PATH` | world memory / tool-call log paths | under `data/` |
