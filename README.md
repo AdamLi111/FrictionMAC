@@ -87,6 +87,12 @@ python -m venv .venv-agent  && .venv-agent/bin/pip install claude-agent-sdk
 .venv-agent/bin/python -m scripts.hw_console
 .venv-agent/bin/python -m scripts.hw_console --stub    # stub (no robot, no movement)
 
+# voice input (real robot only): say "hey misty" + your command; say "quit" to end.
+# NOTE: pin websocket-client==0.57.0 — the vendored mistyPy events use its old callback API.
+.venv-agent/bin/pip install SpeechRecognition "websocket-client==0.57.0" requests sounddevice numpy  # one-time
+VOICE=1 .venv-agent/bin/python -m scripts.hw_console                    # Misty's built-in mic
+VOICE=1 VOICE_LAPTOP_MIC=1 .venv-agent/bin/python -m scripts.hw_console # laptop mic instead
+
 # single command (one-shot):
 .venv-agent/bin/python -m agent_runtime.main "go to the mug"
 
@@ -113,7 +119,11 @@ to `data/hw_session_<ts>.<level>.log`. The console shows only your input and Mis
 | `MISTY_IP` | Robot address; real mode is the default at this IP (override only if it differs) | `172.20.10.2` |
 | `ROBOT_STUB` | `1` = offline stub (same as `--stub` on the entry points) | unset → real |
 | `ROBOT_STUB_SCENE` | dir of `<direction>.jpg` frames the stub serves (perception tests) | unset |
-| `IMAGE_MAX_DIM` | cap the longest edge (px) of frames sent to the VLM; `0`/unset = no resize | unset |
+| `IMAGE_MAX_DIM` | cap the longest edge (px) of frames sent to the VLM; `0` disables resizing | `1024` |
+| `SDK_MAX_BUFFER_MB` | SDK stdio per-message buffer (MB); raise if big image messages overflow it | `64` |
+| `VOICE` | `1` = voice input in `hw_console` ("hey misty" + command; real robot only) | unset → typed |
+| `VOICE_LAPTOP_MIC` | `1` = use the laptop mic (`sounddevice`) instead of Misty's built-in mic | unset → Misty mic |
+| `VOICE_WAKE_WORD` | wake phrase to listen for | `hey misty` |
 | `FRICTION_OFF` | `1` = gate positive-friction utterances (ablation) | unset (friction on) |
 | `LOG_LEVEL` | console transcript level: `INFO`/`DEBUG`/`FULL` | `DEBUG` |
 | `WORLD_STATE_PATH` / `TOOL_LOG_PATH` | world memory / tool-call log paths | under `data/` |

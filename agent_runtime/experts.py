@@ -43,7 +43,7 @@ def build_agents_v2() -> dict:
     return {
         # ---- World-Understanding cluster (manager: world-manager) ----
         "object-lookup": expert("object-lookup", "v2/object_lookup.md",
-            _rt("get_known_location", "find_object", "capture_view")),
+            _rt("get_known_location", "capture_view", "turn_left", "turn_right")),
         "map": expert("map", "v2/map.md",
             _rt("update_world", "get_world", "get_last_view")),
         # ---- Action-Space cluster (manager: action-manager) ----
@@ -59,8 +59,9 @@ def build_agents_v2() -> dict:
 
 
 _V2_DESCRIPTIONS = {
-    "object-lookup": ("The sole perceiver. Locates/verifies an object from world memory AND the "
-                      "camera and reports where it is (view, direction, approx distance, obstacles)."),
+    "object-lookup": ("The sole perceiver. Locates an object from world memory or by looking "
+                      "(capture_view + turning, given the camera's narrow ~45° FOV) and reports "
+                      "its direction and surroundings."),
     "map": ("Owns the world model — records what was seen and judges whether a referenced target "
             "is AMBIGUOUS. Reads the latest captured image; does NOT scan."),
     "navigation": ("Plans and executes movement toward a goal; captures its own front view "
@@ -77,11 +78,11 @@ def build_agents() -> dict:
     return {
         # ---------------- World-Understanding cluster ----------------
         "object-lookup": AgentDefinition(
-            description=("The sole perceiver. Locates/verifies an object for the Director, from "
-                         "world memory AND the camera (find_object/capture_view), and reports "
-                         "where it is (view, direction, approx distance, obstacles)."),
+            description=("The sole perceiver. Locates an object from world memory or by looking "
+                         "(capture_view + turning to look around, given the camera's narrow "
+                         "~45° FOV) and reports its direction and surroundings."),
             prompt=config.read_steering("v1/object_lookup.md"),
-            tools=_rt("get_known_location", "find_object", "capture_view"),
+            tools=_rt("get_known_location", "capture_view", "turn_left", "turn_right"),
             mcpServers=[config.ROBOT_SERVER],
             model="inherit",
         ),

@@ -47,8 +47,8 @@ def _tool(redact=None):
 
 
 # --------------------------------------------------------------------------- movement
-# All wheel movement holds the DRIVE lock, so two drive/turn/scan calls can never overlap
-# on the motors (find_object's 360 scan holds it too). Non-DRIVE tools run concurrently.
+# All wheel movement holds the DRIVE lock, so two drive/turn calls can never overlap on the
+# motors. Non-DRIVE tools run concurrently.
 @_tool()
 def move_forward(distance: float = 1.0) -> dict:
     ms = runtime.calc_drive_time(distance)
@@ -202,17 +202,17 @@ def _redact_capture(result):
 
 @_tool(redact=_redact_capture)
 def capture_view() -> dict:
-    """One raw base64 JPEG frame for the agent to reason over. No VLM here."""
+    """One raw base64 JPEG frame of what's directly ahead (~45° FOV) for the agent to reason
+    over. No VLM here."""
     frame = runtime.capture_frame("front")
-    runtime.set_last_capture([{"direction": "front", "image": frame}])   # cache for get_last_view
+    runtime.set_last_capture([{"direction": "ahead", "image": frame}])   # cache for get_last_view
     return {"ok": True, "image": frame}
 
 
-def _redact_find(result):
+def _redact_frames(result):
     frames = result.get("frames") if isinstance(result, dict) else None
     if isinstance(frames, list):
         return {
-            "target_object": result.get("target_object"),
             "frames": len(frames),
             "directions": [f.get("direction") for f in frames],
             "bytes": [len(f.get("image") or "") for f in frames],
@@ -220,31 +220,10 @@ def _redact_find(result):
     return result
 
 
-@_tool(redact=_redact_find)
-def find_object(target_object: str) -> dict:
-    """Physical 360 deg scan -> 4 labeled raw frames (front/left/back/right). No VLM:
-    the agent judges presence from the images."""
-    r = runtime.get_robot()
-    directions = ["front", "left", "back", "right"]
-    frames = []
-    with runtime.motor_lock("DRIVE"):  # the 360 scan turns the wheels — hold DRIVE throughout
-        for i, direction in enumerate(directions):
-            frames.append({"direction": direction, "image": runtime.capture_frame(direction)})
-            if i < 3:
-                r.drive_time(0, 100, runtime.calc_turn_time(90))  # turn 90 deg left
-                runtime.sleep(2)
-        # return to the original heading
-        r.drive_time(0, 100, runtime.calc_turn_time(90))
-        runtime.sleep(2)
-    runtime.set_last_capture(frames)   # cache all 4 views for get_last_view
-    return {"ok": True, "target_object": target_object, "frames": frames}
-
-
-@_tool(redact=_redact_find)
+@_tool(redact=_redact_frames)
 def get_last_view() -> dict:
-    """The frames from the MOST RECENT capture (cached), WITHOUT capturing anew — no camera
-    trigger, no motor: one frame from a capture_view, or all four from a 360° find_object scan.
-    Use to look at everything just seen."""
+    """The frame(s) from the MOST RECENT capture (cached), WITHOUT capturing anew — no camera
+    trigger, no motor. Use to look again at what was just seen."""
     return {"ok": True, "frames": runtime.get_last_capture()}
 
 
@@ -278,7 +257,7 @@ ALL_TOOLS = [
     # speech
     speak,
     # vision
-    capture_view, get_last_view, find_object,
+    capture_view, get_last_view,
     # world memory
     get_known_location, update_world, get_world,
 ]

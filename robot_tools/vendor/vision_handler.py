@@ -26,9 +26,21 @@ class VisionHandler:
         try:
             time.sleep(2)
             
-            # Take a photo
+            # Camera aspect (verified on this unit): Misty returns the *transpose* of the
+            # requested size (1600x1200 -> a 1200x1600 frame) with content UPRIGHT (no EXIF, so
+            # do NOT post-rotate — rotating makes it sideways). Only the exact resolutions in
+            # Misty's list are valid; a non-listed size like 1080x1920 makes take_picture return
+            # nothing (empty frame). The camera is effectively portrait-native, so resolution
+            # can't produce a landscape frame — a 16:9 request just comes back narrower. We use
+            # 1600x1200 (valid; widest resulting portrait). To get a landscape-shaped image you'd
+            # crop, not rescale. Valid sizes: docs.mistyrobotics.com/.../#take_picture
+            # Confirmed on this unit: the camera is portrait-native. Any request comes back as a
+            # transposed PORTRAIT frame (1600x1200 -> 1200x1600; 1920x1080 -> 1080x1920), content
+            # upright (no EXIF; do NOT rotate). 16:9 only makes it narrower (1080px vs 1200px
+            # wide), so 4:3 (1600x1200) gives the widest usable frame. Resolution can't produce a
+            # landscape image — a center-crop would, at the cost of vertical FOV.
             result = self.robot.take_picture(
-                base64=True, 
+                base64=True,
                 fileName='vision_temp',
                 width=1600,
                 height=1200,

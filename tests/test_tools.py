@@ -21,10 +21,10 @@ def _read_log(path):
 
 
 # --------------------------------------------------------------------- Test 1: all tools
-def test_all_17_tools_callable_and_shaped(stub_env):
+def test_all_16_tools_callable_and_shaped(stub_env):
     from robot_tools import tools
 
-    assert len(tools.ALL_TOOLS) == 17
+    assert len(tools.ALL_TOOLS) == 16
 
     # movement
     r = tools.move_forward(2.0)
@@ -49,12 +49,7 @@ def test_all_17_tools_callable_and_shaped(stub_env):
     cv = tools.capture_view()
     assert cv["ok"] is True and isinstance(cv["image"], str) and cv["image"]
     lv = tools.get_last_view()   # after capture_view -> 1 cached frame
-    assert lv["ok"] is True and len(lv["frames"]) == 1 and lv["frames"][0]["direction"] == "front"
-    fo = tools.find_object("bag")
-    assert fo["ok"] is True and len(fo["frames"]) == 4
-    lv2 = tools.get_last_view()  # after a 360 scan -> all 4 cached frames
-    assert len(lv2["frames"]) == 4 and [f["direction"] for f in lv2["frames"]] == \
-        ["front", "left", "back", "right"]
+    assert lv["ok"] is True and len(lv["frames"]) == 1 and lv["frames"][0]["direction"] == "ahead"
 
     # world memory
     assert tools.get_known_location("nothing-known") is None
@@ -69,7 +64,7 @@ def test_all_17_tools_callable_and_shaped(stub_env):
     for name in ["move_forward", "move_backward",
                  "turn_left", "turn_right", "stop", "move_arm", "move_head",
                  "display_image", "change_led", "reset_pose", "speak", "capture_view",
-                 "get_last_view", "find_object", "get_known_location", "update_world",
+                 "get_last_view", "get_known_location", "update_world",
                  "get_world"]:
         assert name in tool_names, f"{name} not logged"
 
@@ -191,16 +186,6 @@ def test_interrupted_write_does_not_corrupt_existing_file(stub_env, monkeypatch)
 
 
 # ------------------------------------------ Test 6: vision frame shapes
-def test_find_object_returns_four_labeled_frames(stub_env):
-    from robot_tools import tools
-
-    result = tools.find_object("cup")
-    frames = result["frames"]
-    assert len(frames) == 4
-    assert [f["direction"] for f in frames] == ["front", "left", "back", "right"]
-    assert all(isinstance(f["image"], str) and f["image"] for f in frames)
-
-
 def test_capture_view_returns_one_frame(stub_env):
     from robot_tools import tools
 
@@ -208,21 +193,14 @@ def test_capture_view_returns_one_frame(stub_env):
     assert isinstance(result["image"], str) and result["image"]
 
 
-def test_find_object_image_result_is_redacted_in_log(stub_env):
+def test_capture_view_image_result_is_redacted_in_log(stub_env):
     from robot_tools import tools
 
-    tools.find_object("cup")
     tools.capture_view()
     log = _read_log(stub_env["log_path"])
 
-    fo = [e for e in log if e["name"] == "find_object"][-1]
-    # Redacted: counts/sizes, not raw base64.
-    assert fo["result"]["frames"] == 4
-    assert fo["result"]["directions"] == ["front", "left", "back", "right"]
-    assert "image" not in json.dumps(fo["result"]) or True  # raw frames not embedded
-    assert isinstance(fo["result"]["bytes"], list)
-
     cv = [e for e in log if e["name"] == "capture_view"][-1]
+    # Redacted: counts/sizes, not raw base64.
     assert cv["result"]["frames"] == 1 and "image" not in cv["result"]
 
 

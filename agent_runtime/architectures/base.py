@@ -17,6 +17,7 @@ Everything shared (model, MCP wiring, hooks, permission mode, hermetic settings)
 """
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 
 from claude_agent_sdk import ClaudeAgentOptions
@@ -74,11 +75,14 @@ class Architecture(ABC):
             permission_mode="default",
             setting_sources=[],          # hermetic: ignore ambient .claude/settings.json
             max_turns=self.max_turns,
+            # Camera frames (base64 JPEGs) can exceed the SDK's default 1 MB stdio buffer and
+            # kill the reader — most visible in V3, where the agent ingests images in the main
+            # conversation. Raise it generously (env-tunable).
+            max_buffer_size=int(os.environ.get("SDK_MAX_BUFFER_MB", "64")) * 1024 * 1024,
         )
         extra = self.subprocess_env()
         if extra:
             # env passed to the CLI subprocess; merge over the inherited environment so we
             # only add (e.g. the agent-teams flag), never drop PATH / ANTHROPIC_API_KEY.
-            import os
             opts.env = {**os.environ, **extra}
         return opts

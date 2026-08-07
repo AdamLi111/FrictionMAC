@@ -124,11 +124,6 @@ def _process(msg, logs, turn, sess):
                     logs.emit("INFO", f"Misty: {text}")
                     logs.emit("DEBUG", f"[speak/{inp.get('friction_type', '')}] {text}")
                     turn["spoke"] = True
-                    if inp.get("friction_type") == "probing":
-                        # A probing utterance hands the turn back to the user (a question). Once
-                        # the Director also ends its turn, we return control immediately instead
-                        # of waiting on background work — see _collect_turn.
-                        turn["asked_user"] = True
                 else:
                     logs.emit("DEBUG", f"[tool] {name} input={inp}")
 
@@ -202,7 +197,7 @@ async def _collect_turn(recv, logs, sess) -> bool:
     completions are drained into this turn). Reads the queue (safe to time out), never the raw
     generator."""
     turn = {"pending": set(), "result_seen": False, "spoke": False,
-            "awaiting_continuation": False, "last_done": None, "asked_user": False}
+            "awaiting_continuation": False, "last_done": None}
     t0 = time.monotonic()
     while True:
         if time.monotonic() - t0 > agent_main.MAX_COLLECT_S:
@@ -216,11 +211,12 @@ async def _collect_turn(recv, logs, sess) -> bool:
                 break
         if not scope.cancelled_caught:
             _process(msg, logs, turn, sess)
-        # The robot asked the user a question (probing) and the Director ended its turn: hand
-        # control straight back to the user, even if background tasks are still running — they
-        # keep going and are drained on the next turn. (Without this, a pending background
-        # world-model recording would make the user wait to answer the robot's own question.)
-        if turn["asked_user"] and turn["result_seen"]:
+        # Once the Director's turn has ended AND the robot has delivered its spoken reply, the
+        # user's command is complete — hand control straight back (show the prompt / re-arm voice)
+        # even if a fire-and-forget background task (e.g. a world-model recording) is still
+        # running; it keeps going and is drained on the next turn. `spoke` distinguishes a real
+        # answer from the fragmented mid-cascade case, which hasn't spoken yet.
+        if turn["spoke"] and turn["result_seen"]:
             break
         if scope.cancelled_caught:                       # quiet for QUIET_S
             if turn["pending"]:
@@ -272,8 +268,23 @@ async def run():
     mode = f"REAL robot @ {ip}" if ip else \
         "STUB (no physical movement — omit --stub to use the real robot)"
     print(f"── Misty console ──  mode: {mode}  |  log level: {level}")
-    print("Type a command and press Enter. 'quit' to end.\n")
-    logs.emit("INFO", f"[session start] mode={mode} level={level}")
+
+    # Optional voice input (VOICE=1) — needs the real robot. VOICE_LAPTOP_MIC=1 = laptop mic.
+    voice = None
+    if os.environ.get("VOICE") == "1":
+        if ip is None:
+            print("(VOICE=1 ignored — voice input needs the real Misty; running in stub/text mode)")
+        else:
+            from agent_runtime import speech
+            use_laptop = os.environ.get("VOICE_LAPTOP_MIC") == "1"
+            voice = speech.VoiceInput(ip, use_laptop_mic=use_laptop).start()
+            src = "laptop mic" if use_laptop else "Misty's mic"
+            print(f"── Voice input ON ({src}) — say '{speech.WAKE_WORD}' then your command; "
+                  f"say 'quit' to end.")
+    if voice is None:
+        print("Type a command and press Enter. 'quit' to end.")
+    print()
+    logs.emit("INFO", f"[session start] mode={mode} level={level} voice={bool(voice)}")
 
     options = agent_main.build_options(tool_log, world, None)
     options.stderr = lambda line: logs.emit("FULL", f"[stderr] {line.rstrip()}")
@@ -295,7 +306,14 @@ async def run():
                 try:
                     while True:
                         try:
-                            cmd = (await anyio.to_thread.run_sync(lambda: input("you> "))).strip()
+                            if voice is not None:
+                                # Block (in a worker thread) for the next spoken command, same
+                                # place typed input would go.
+                                cmd = (await anyio.to_thread.run_sync(voice.next_command) or "").strip()
+                                if cmd:
+                                    print(f"you> {cmd}")
+                            else:
+                                cmd = (await anyio.to_thread.run_sync(lambda: input("you> "))).strip()
                         except (EOFError, KeyboardInterrupt):
                             print()
                             break
@@ -311,6 +329,8 @@ async def run():
                             print("(no spoken reply)")
                             logs.emit("INFO", "  (no spoken reply)")
                 finally:
+                    if voice is not None:
+                        voice.cleanup()
                     tg.cancel_scope.cancel()             # stop the reader; end the session
     finally:
         logs.emit("INFO", "[session end]")
@@ -319,4 +339,7 @@ async def run():
 
 
 if __name__ == "__main__":
-    anyio.run(run)
+    try:
+        anyio.run(run)
+    except KeyboardInterrupt:
+        pass   # clean exit on Ctrl-C (e.g. while blocked waiting on voice input)

@@ -27,15 +27,20 @@ async def _off(fn, *args):
     return await anyio.to_thread.run_sync(lambda: fn(*args))
 
 
+#: Default longest-edge cap (px) for frames sent to the VLM. Downscaling is ON by default to
+#: bound per-frame image tokens; override with IMAGE_MAX_DIM (set 0 to disable resizing).
+DEFAULT_IMAGE_MAX_DIM = 1024
+
+
 def _downscale_jpeg(raw: bytes) -> bytes:
-    """Cap the resolution of a frame BEFORE it goes to the VLM. If IMAGE_MAX_DIM is set (>0),
-    shrink the JPEG so its longest edge is at most that many pixels (aspect ratio preserved,
-    never upscaled) — this bounds per-frame image tokens. No-op when unset/0, when the frame is
-    already within the cap, or on any failure (perception must never break)."""
+    """Cap the resolution of a frame BEFORE it goes to the VLM: shrink the JPEG so its longest
+    edge is at most IMAGE_MAX_DIM pixels (default 1024; aspect ratio preserved, never upscaled),
+    bounding per-frame image tokens. No-op when the cap is <= 0 (IMAGE_MAX_DIM=0 disables it),
+    when the frame is already within the cap, or on any failure (perception must never break)."""
     try:
-        max_dim = int(os.environ.get("IMAGE_MAX_DIM", "0"))
+        max_dim = int(os.environ.get("IMAGE_MAX_DIM", str(DEFAULT_IMAGE_MAX_DIM)))
     except ValueError:
-        max_dim = 0
+        max_dim = DEFAULT_IMAGE_MAX_DIM
     if max_dim <= 0:
         return raw
     try:
@@ -138,45 +143,33 @@ async def speak(text: str, friction_type: str) -> dict:
 
 
 # ---- vision (raw frames as viewable image content) ----
+# The camera's field of view is narrow (~45°): one capture shows only what's roughly straight
+# ahead. To see another direction, turn, then capture again. Frames are labeled "directly ahead
+# (~45° FOV)" — the robot's current heading — not fixed cardinal views.
 @mcp.tool()
 async def capture_view():
-    """Capture one image from the camera and return it as viewable image content."""
+    """Capture one image of what's directly ahead (~45° FOV) and return it as viewable image
+    content."""
     r = await _off(tools.capture_view)
     if not r.get("ok"):
         return f"capture_view failed: {r.get('error')}"
-    return _frame_content(r.get("image"), "front view")
+    return ["Directly ahead (~45° FOV):", _frame_content(r.get("image"), "directly ahead")]
 
 
 @mcp.tool()
 async def get_last_view():
-    """Return the frames from the MOST RECENT capture as viewable image content, WITHOUT
-    capturing anew (no camera trigger, no motor): one frame from a capture_view, or all four
-    views from a 360° find_object scan."""
+    """Return the MOST RECENT captured frame as viewable image content, WITHOUT capturing anew
+    (no camera trigger, no motor)."""
     r = await _off(tools.get_last_view)
     if not r.get("ok"):
         return f"get_last_view failed: {r.get('error')}"
     frames = r.get("frames") or []
     if not frames:
         return "No frames have been captured yet."
-    out = [f"Most recent capture — {len(frames)} view(s), no new scan:"]
+    out = ["Most recent capture (no new shot):"]
     for fr in frames:
-        out.append(f"View: {fr['direction']}")
-        out.append(_frame_content(fr["image"], fr["direction"]))
-    return out
-
-
-@mcp.tool()
-async def find_object(target_object: str):
-    """Physical 360° scan → 4 labeled views (front/left/back/right) as viewable image content.
-    No VLM runs — YOU judge presence and how many plausible candidates there are."""
-    r = await _off(tools.find_object, target_object)
-    if not r.get("ok"):
-        return f"find_object failed: {r.get('error')}"
-    out = [f"360-degree scan for '{target_object}'. Judge presence and count from these "
-           f"{len(r['frames'])} views (a candidate may appear in more than one view):"]
-    for fr in r["frames"]:
-        out.append(f"View: {fr['direction']}")
-        out.append(_frame_content(fr["image"], fr["direction"]))
+        out.append("Directly ahead (~45° FOV):")
+        out.append(_frame_content(fr["image"], "directly ahead"))
     return out
 
 

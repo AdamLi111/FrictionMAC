@@ -89,7 +89,7 @@ ALL_ROBOT_TOOLS = [robot_tool(n) for n in [
     "move_forward", "move_backward", "turn_left", "turn_right", "stop",
     "move_arm", "move_head", "display_image", "change_led", "reset_pose",
     "speak",
-    "capture_view", "get_last_view", "find_object",
+    "capture_view", "get_last_view",
     "get_known_location", "update_world", "get_world",
 ]]
 
