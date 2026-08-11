@@ -74,6 +74,26 @@ _V2_DESCRIPTIONS = {
 }
 
 
+def build_agents_v4() -> dict:
+    """V4 experts — structurally identical to V1 (flat, same tools, no teams/SendMessage) but
+    reading steering/v4/*.md, where every approval gate is removed: dialogue agents speak
+    directly and navigation plans-and-drives directly (no propose→approve step)."""
+    agents = build_agents()
+    for name, steering in (
+        ("object-lookup", "v4/object_lookup.md"), ("map", "v4/map.md"),
+        ("navigation", "v4/navigation.md"), ("expression", "v4/expression.md"),
+        ("regular-utterance", "v4/regular_utterance.md"), ("friction", "v4/friction.md"),
+    ):
+        agents[name].prompt = config.read_steering(steering)
+    # Drop the "proposes / speaks only once approved" phrasing from the two dialogue descriptions.
+    agents["regular-utterance"].description = (
+        "Speaks a NORMAL reply (confirmations, answers, status) to the user directly.")
+    agents["friction"].description = (
+        "Speaks a POSITIVE-FRICTION utterance (clarify / reveal assumption / pause / etc.) "
+        "directly, with the right friction_type; also voices user-facing clarifying questions.")
+    return agents
+
+
 def build_agents() -> dict:
     return {
         # ---------------- World-Understanding cluster ----------------

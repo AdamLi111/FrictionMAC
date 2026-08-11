@@ -30,8 +30,9 @@ class Architecture(ABC):
     name: str = ""
     #: one-line human description (shown by the CLI when listing variants)
     description: str = ""
-    #: top-level model for the Director/orchestrator
-    model: str = "sonnet"
+    #: top-level model for the Director/orchestrator (subagents inherit). Haiku 4.5 handles
+    #: image/vision input, so perceivers work on it.
+    model: str = "haiku"
     #: agentic-turn budget for the top-level loop
     max_turns: int = 40
 

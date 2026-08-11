@@ -12,6 +12,7 @@ Usage:
     python -m agent_runtime.main "move forward 1 meter"
     MISTY_IP=... python -m agent_runtime.main "go over to the door"     # real robot
 """
+import math
 import os
 import sys
 import time
@@ -35,7 +36,10 @@ DEFAULT_WORLD_STATE = config.DATA_DIR / "agent_world_state.json"
 # Terminal statuses for a background task (from TaskNotification.status / TaskUpdated.patch).
 _TERMINAL = {"completed", "failed", "stopped", "succeeded"}
 POLL_S = 3.0                                      # idle gap that means "no more messages"
-MAX_COLLECT_S = float(os.environ.get("COLLECT_MAX_S", "300"))  # overall safety cap
+# Overall per-turn cap. A turn takes as long as it needs by default (no cap); set
+# COLLECT_MAX_S>0 only if you want a hard safety ceiling to guard a genuine hang.
+_collect_cap = float(os.environ.get("COLLECT_MAX_S", "0"))
+MAX_COLLECT_S = _collect_cap if _collect_cap > 0 else math.inf
 
 
 def build_options(tool_log, world_state, scene=None, arch=None) -> ClaudeAgentOptions:

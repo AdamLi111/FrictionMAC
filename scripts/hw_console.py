@@ -36,7 +36,7 @@ from claude_agent_sdk import (
     SystemMessage,
 )
 
-from agent_runtime import config, main as agent_main
+from agent_runtime import architectures, config, main as agent_main
 
 SPEAK = config.robot_tool("speak")
 QUIT = {"quit", "exit", "q", ":q"}
@@ -47,6 +47,19 @@ QUIET_S = 2.0   # after the Director finishes, wait this long of silence to drai
 # giving up (a completion with no follow-up shouldn't hang). Does NOT apply while the Director
 # is still mid-turn — there we wait for the real ResultMessage (bounded by MAX_COLLECT_S).
 CONTINUATION_GRACE_S = 20.0
+
+
+def _stamp_command(cmd: str, last_reply_at: float | None) -> str:
+    """Prefix the user's command with the wall-clock time and how long it has been since the
+    Director last replied, so the Director can reason about elapsed time (how long the previous
+    task or the user took). The raw command is still what gets logged/shown; only the copy sent
+    to the Director carries this header."""
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    if last_reply_at is None:
+        gap = "session just started"
+    else:
+        gap = f"{time.monotonic() - last_reply_at:.0f}s since your last reply"
+    return f"[clock {now} | {gap}]\n\n{cmd}"
 
 
 def _terminal_status(msg):
@@ -265,9 +278,11 @@ async def run():
     logs = Logs(transcript, level)
     sess = {"labels": {}, "done": set()}   # session-wide task tracking (cross-turn dedup)
 
+    arch = architectures.get(None)   # honors AGENT_ARCH, else the default variant
     mode = f"REAL robot @ {ip}" if ip else \
         "STUB (no physical movement — omit --stub to use the real robot)"
-    print(f"── Misty console ──  mode: {mode}  |  log level: {level}")
+    print(f"── Misty console ──  arch: {arch.name} ({arch.description})  |  "
+          f"mode: {mode}  |  log level: {level}")
 
     # Optional voice input (VOICE=1) — needs the real robot. VOICE_LAPTOP_MIC=1 = laptop mic.
     voice = None
@@ -284,9 +299,10 @@ async def run():
     if voice is None:
         print("Type a command and press Enter. 'quit' to end.")
     print()
-    logs.emit("INFO", f"[session start] mode={mode} level={level} voice={bool(voice)}")
+    logs.emit("INFO", f"[session start] arch={arch.name} mode={mode} level={level} "
+                      f"voice={bool(voice)}")
 
-    options = agent_main.build_options(tool_log, world, None)
+    options = agent_main.build_options(tool_log, world, None, arch=arch)
     options.stderr = lambda line: logs.emit("FULL", f"[stderr] {line.rstrip()}")
 
     try:
@@ -303,6 +319,7 @@ async def run():
                         send.close()
 
                 tg.start_soon(reader)
+                last_reply_at = None   # monotonic time the Director last finished a turn
                 try:
                     while True:
                         try:
@@ -323,8 +340,9 @@ async def run():
                             continue
                         _drain_now(recv, logs, sess)     # clear inter-turn stragglers first
                         logs.emit("INFO", f"\n===== you: {cmd} =====")
-                        await client.query(cmd)
+                        await client.query(_stamp_command(cmd, last_reply_at))
                         spoke = await _collect_turn(recv, logs, sess)
+                        last_reply_at = time.monotonic()
                         if not spoke:
                             print("(no spoken reply)")
                             logs.emit("INFO", "  (no spoken reply)")
