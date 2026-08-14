@@ -14,6 +14,20 @@ REPO = Path(__file__).resolve().parent.parent
 STEERING_DIR = Path(__file__).resolve().parent / "steering"
 DATA_DIR = REPO / "data"
 
+
+def belief_store_path() -> Path:
+    """File where the agent's world-model beliefs (get_world / update_world / get_known_location)
+    persist. In SIM mode this is a SEPARATE file per scene, so simulated beliefs never mix with
+    the real-robot store (or with a different scene's). An explicit WORLD_STATE_PATH always wins."""
+    override = os.environ.get("WORLD_STATE_PATH")
+    if override:
+        return Path(override)
+    scene = os.environ.get("ROBOT_SIM_SCENE")
+    if scene or os.environ.get("ROBOT_SIM") == "1":
+        base = os.path.splitext(os.path.basename(scene))[0] if scene else "sim"
+        return DATA_DIR / f"sim_world_{base}.json"
+    return DATA_DIR / "agent_world_state.json"
+
 # The robot is (almost) always at this address, so you never have to type MISTY_IP: real mode
 # is the default and uses this IP. Opt into offline stub with ROBOT_STUB=1 (or --stub).
 DEFAULT_MISTY_IP = "172.20.10.2"
@@ -64,7 +78,15 @@ def robot_mcp_config(tool_log_path: Path, world_state_path: Path, scene: str | N
         "WORLD_STATE_PATH": str(world_state_path),
     }
     misty_ip = os.environ.get("MISTY_IP")
-    if misty_ip:
+    sim_scene = os.environ.get("ROBOT_SIM_SCENE")
+    sim = os.environ.get("ROBOT_SIM") == "1" or bool(sim_scene)
+    if sim:
+        # Simulation stands in for the physical robot (offline, no MISTY_IP). The server reads
+        # ROBOT_SIM / ROBOT_SIM_SCENE and backs the tools with a ground-truth SimWorld.
+        env["ROBOT_SIM"] = "1"
+        if sim_scene:
+            env["ROBOT_SIM_SCENE"] = sim_scene
+    elif misty_ip:
         env["MISTY_IP"] = misty_ip              # REAL robot
     else:
         env["ROBOT_STUB"] = "1"                 # offline stub (default)
@@ -112,8 +134,12 @@ def select_robot_target(stub: bool = False) -> str | None:
     subprocess. REAL mode is the default at DEFAULT_MISTY_IP (so you never type MISTY_IP);
     pass stub=True or set ROBOT_STUB=1 for offline development.
 
-    Returns the robot IP (real mode) or None (stub). Mutates os.environ so robot_mcp_config
+    Returns the robot IP (real mode) or None (stub/sim). Mutates os.environ so robot_mcp_config
     and the preflight agree on the chosen mode."""
+    # Simulation is offline like the stub: no MISTY_IP, no preflight.
+    if os.environ.get("ROBOT_SIM") == "1" or os.environ.get("ROBOT_SIM_SCENE"):
+        os.environ.pop("MISTY_IP", None)
+        return None
     if stub or os.environ.get("ROBOT_STUB") == "1":
         os.environ["ROBOT_STUB"] = "1"
         os.environ.pop("MISTY_IP", None)     # MISTY_IP would otherwise force real mode

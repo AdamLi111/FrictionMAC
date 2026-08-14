@@ -82,6 +82,34 @@ def get_robot():
     return _state["robot"]
 
 
+def get_sim_world():
+    """The ground-truth simulation world (sim mode only), loaded once from the scene file.
+    Movement tools mutate it and capture_view reads it; it is distinct from the agent's belief
+    store in get_world(). Returns None when the sim is not active."""
+    if not config.is_sim():
+        return None
+    if "sim_world" not in _state:
+        from .sim import load_scene
+        _state["sim_world"] = load_scene(config.sim_scene_path())
+        save_sim_state()                 # write the start pose so external viewers see it
+    return _state["sim_world"]
+
+
+def save_sim_state():
+    """Atomically write the live sim world to sim_state_path so a separate process (e.g. the
+    visualizer) can render the robot's current pose. No-op outside sim mode."""
+    world = _state.get("sim_world")
+    if world is None:
+        return
+    import json
+    path = config.sim_state_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(world.snapshot(), f, indent=2)
+    os.replace(tmp, path)                 # atomic: readers never see a half-written file
+
+
 def get_vision():
     """VisionHandler in real mode; None in stub mode (frames are faked)."""
     if "vision" not in _state:

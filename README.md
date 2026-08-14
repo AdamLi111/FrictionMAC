@@ -112,6 +112,35 @@ fully offline.
 `LOG_LEVEL` (`INFO` | `DEBUG` | `FULL`, default `DEBUG`) sets the transcript verbosity written
 to `data/hw_session_<ts>.<level>.log`. The console shows only your input and Misty's speech.
 
+## Simulation (offline world model)
+
+A ground-truth 2-D world in [`robot_tools/sim/`](robot_tools/sim/) stands in for the physical
+Misty, **behind the MCP stub** — so the same agents, steering, architectures, and `mcp__robot__*`
+tools run unchanged against it. Turn it on with a scene:
+
+```bash
+ROBOT_SIM_SCENE=office_kitchen AGENT_ARCH=v4 .venv-agent/bin/python -m scripts.hw_console
+```
+
+- **Everything is an object with a `shape`** — `point` (cups), `segment` (walls, with
+  thickness), or `rect` (tables). There is no "obstacle" flag; **every** object is collidable, and
+  a collision records *which* object was hit (so an evaluator can call it success when the user
+  asked to reach/bump that target, failure otherwise).
+- **Walls block movement and occlude vision.** Rooms are authored as individual wall segments; a
+  doorway is just a gap between two. Movement is wall-aware dead-reckoning; `capture_view` returns
+  a **synthetic text POV** of only what's inside the narrow ~45° FOV and not hidden behind a wall.
+- Scenes are JSON in [`robot_tools/sim/scenes/`](robot_tools/sim/scenes/) (schema in
+  [`sim/scene.py`](robot_tools/sim/scene.py)); `ROBOT_SIM_SCENE` takes a bundled name or a path.
+- **Visualize a scene** as a minimalist top-down SVG (walls, objects, robot heading + FOV, and
+  what's currently in view): `python -m robot_tools.sim.visualize office_kitchen` → writes
+  `data/scene_<name>.svg` (open in the IDE or a browser).
+- **Watch the live pose.** The sim world lives in-memory in the MCP server process and mutates as
+  the agent moves; it's mirrored to `data/sim_state.json` on every move. Render the *running*
+  session's current pose with `python -m robot_tools.sim.visualize --live` (re-run after each
+  command). The scene file itself stays the pristine initial condition — the sim never writes it.
+- The sim world is **ground truth only** — separate from the agent's belief store
+  (`get_world`/`update_world`), which the sim never writes.
+
 ## Config (env)
 
 | Var | Meaning | Default |
@@ -120,6 +149,7 @@ to `data/hw_session_<ts>.<level>.log`. The console shows only your input and Mis
 | `MISTY_IP` | Robot address; real mode is the default at this IP (override only if it differs) | `172.20.10.2` |
 | `ROBOT_STUB` | `1` = offline stub (same as `--stub` on the entry points) | unset → real |
 | `ROBOT_STUB_SCENE` | dir of `<direction>.jpg` frames the stub serves (perception tests) | unset |
+| `ROBOT_SIM` / `ROBOT_SIM_SCENE` | run the **simulation** (a ground-truth 2-D world) behind the stub; `ROBOT_SIM_SCENE` picks a scene (path or bundled name) | unset / `office_kitchen` |
 | `IMAGE_MAX_DIM` | cap the longest edge (px) of frames sent to the VLM; `0` disables resizing | `1024` |
 | `SDK_MAX_BUFFER_MB` | SDK stdio per-message buffer (MB); raise if big image messages overflow it | `64` |
 | `VOICE` | `1` = voice input in `hw_console` ("hey misty" + command; real robot only) | unset → typed |

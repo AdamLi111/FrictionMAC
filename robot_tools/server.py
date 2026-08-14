@@ -153,6 +153,8 @@ async def capture_view():
     r = await _off(tools.capture_view)
     if not r.get("ok"):
         return f"capture_view failed: {r.get('error')}"
+    if r.get("pov") is not None:            # sim mode: synthetic text POV, no image
+        return r["pov"]
     return ["Directly ahead (~45° FOV):", _frame_content(r.get("image"), "directly ahead")]
 
 
@@ -168,6 +170,9 @@ async def get_last_view():
         return "No frames have been captured yet."
     out = ["Most recent capture (no new shot):"]
     for fr in frames:
+        if fr.get("pov") is not None:      # sim mode: synthetic text POV
+            out.append(fr["pov"])
+            continue
         out.append("Directly ahead (~45° FOV):")
         out.append(_frame_content(fr["image"], "directly ahead"))
     return out

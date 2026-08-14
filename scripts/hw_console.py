@@ -272,15 +272,21 @@ async def run():
         level = "DEBUG"
     transcript = config.DATA_DIR / f"hw_session_{stamp}.{level.lower()}.log"
     tool_log = config.DATA_DIR / f"hw_session_{stamp}_tools.jsonl"
-    world = config.DATA_DIR / "agent_world_state.json"
+    world = config.belief_store_path()   # sim uses a separate per-scene file from the real robot
     os.environ["AGENT_EVENT_LOG"] = str(config.DATA_DIR / f"hw_session_{stamp}_events.jsonl")
 
     logs = Logs(transcript, level)
     sess = {"labels": {}, "done": set()}   # session-wide task tracking (cross-turn dedup)
 
     arch = architectures.get(None)   # honors AGENT_ARCH, else the default variant
-    mode = f"REAL robot @ {ip}" if ip else \
-        "STUB (no physical movement — omit --stub to use the real robot)"
+    sim_scene = os.environ.get("ROBOT_SIM_SCENE") if (
+        os.environ.get("ROBOT_SIM") == "1" or os.environ.get("ROBOT_SIM_SCENE")) else None
+    if sim_scene is not None or os.environ.get("ROBOT_SIM") == "1":
+        mode = f"SIM (world model, scene={sim_scene or 'office_kitchen'})"
+    elif ip:
+        mode = f"REAL robot @ {ip}"
+    else:
+        mode = "STUB (no physical movement — omit --stub to use the real robot)"
     print(f"── Misty console ──  arch: {arch.name} ({arch.description})  |  "
           f"mode: {mode}  |  log level: {level}")
 

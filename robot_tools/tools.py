@@ -14,7 +14,7 @@ import contextlib
 import functools
 import inspect
 
-from . import runtime
+from . import config, runtime
 
 
 def _tool(redact=None):
@@ -49,10 +49,24 @@ def _tool(redact=None):
 # --------------------------------------------------------------------------- movement
 # All wheel movement holds the DRIVE lock, so two drive/turn calls can never overlap on the
 # motors. Non-DRIVE tools run concurrently.
+def _drive_sim(distance: float, ms: int) -> dict:
+    """Apply a straight move to the sim world (exact distance, not reconstructed from ms) and
+    surface any collision. `distance` may be negative for a backward move."""
+    col = runtime.get_sim_world().move(distance)
+    runtime.save_sim_state()
+    runtime.sleep(ms / 1000)
+    if col["collision"]:
+        return {"ok": False, "collision": col["collision"], "message": col["message"],
+                "duration_ms": ms}
+    return {"ok": True, "duration_ms": ms}
+
+
 @_tool()
 def move_forward(distance: float = 1.0) -> dict:
     ms = runtime.calc_drive_time(distance)
     with runtime.motor_lock("DRIVE"):
+        if config.is_sim():
+            return _drive_sim(distance, ms)
         runtime.get_robot().drive_time(50, 0, ms)
         runtime.sleep(ms / 1000)
     return {"ok": True, "duration_ms": ms}
@@ -62,6 +76,8 @@ def move_forward(distance: float = 1.0) -> dict:
 def move_backward(distance: float = 1.0) -> dict:
     ms = runtime.calc_drive_time(distance)
     with runtime.motor_lock("DRIVE"):
+        if config.is_sim():
+            return _drive_sim(-distance, ms)
         runtime.get_robot().drive_time(-50, 0, ms)
         runtime.sleep(ms / 1000)
     return {"ok": True, "duration_ms": ms}
@@ -71,6 +87,11 @@ def move_backward(distance: float = 1.0) -> dict:
 def turn_left(degrees: float) -> dict:
     ms = runtime.calc_turn_time(degrees)
     with runtime.motor_lock("DRIVE"):
+        if config.is_sim():
+            runtime.get_sim_world().turn(-degrees)   # left = counter-clockwise = -θ
+            runtime.save_sim_state()
+            runtime.sleep(ms / 1000)
+            return {"ok": True, "duration_ms": ms}
         runtime.get_robot().drive_time(0, 100, ms)
         runtime.sleep(ms / 1000)
     return {"ok": True, "duration_ms": ms}
@@ -80,6 +101,11 @@ def turn_left(degrees: float) -> dict:
 def turn_right(degrees: float) -> dict:
     ms = runtime.calc_turn_time(degrees)
     with runtime.motor_lock("DRIVE"):
+        if config.is_sim():
+            runtime.get_sim_world().turn(degrees)    # right = clockwise = +θ
+            runtime.save_sim_state()
+            runtime.sleep(ms / 1000)
+            return {"ok": True, "duration_ms": ms}
         runtime.get_robot().drive_time(0, -100, ms)
         runtime.sleep(ms / 1000)
     return {"ok": True, "duration_ms": ms}
@@ -194,6 +220,8 @@ def speak(text: str, friction_type: str) -> dict:
 
 # ----------------------------------------------------------------------------- vision
 def _redact_capture(result):
+    if isinstance(result, dict) and "pov" in result:
+        return {"pov_chars": len(result.get("pov") or "")}
     if isinstance(result, dict) and "image" in result:
         img = result.get("image") or ""
         return {"frames": 1 if img else 0, "bytes": len(img)}
@@ -202,8 +230,12 @@ def _redact_capture(result):
 
 @_tool(redact=_redact_capture)
 def capture_view() -> dict:
-    """One raw base64 JPEG frame of what's directly ahead (~45° FOV) for the agent to reason
-    over. No VLM here."""
+    """One view of what's directly ahead (~45° FOV) for the agent to reason over. Real/stub mode
+    returns a raw base64 JPEG; sim mode returns a synthetic text POV (no image). No VLM here."""
+    if config.is_sim():
+        pov = runtime.get_sim_world().describe_view()
+        runtime.set_last_capture([{"direction": "ahead", "pov": pov}])
+        return {"ok": True, "pov": pov}
     frame = runtime.capture_frame("front")
     runtime.set_last_capture([{"direction": "ahead", "image": frame}])   # cache for get_last_view
     return {"ok": True, "image": frame}
@@ -215,7 +247,7 @@ def _redact_frames(result):
         return {
             "frames": len(frames),
             "directions": [f.get("direction") for f in frames],
-            "bytes": [len(f.get("image") or "") for f in frames],
+            "bytes": [len(f.get("image") or f.get("pov") or "") for f in frames],
         }
     return result
 

@@ -31,7 +31,7 @@ from claude_agent_sdk import (
 from agent_runtime import architectures, config
 
 DEFAULT_TOOL_LOG = config.DATA_DIR / "agent_tool_calls.jsonl"
-DEFAULT_WORLD_STATE = config.DATA_DIR / "agent_world_state.json"
+# Belief-store path is chosen by config.belief_store_path() (sim uses a separate per-scene file).
 
 # Terminal statuses for a background task (from TaskNotification.status / TaskUpdated.patch).
 _TERMINAL = {"completed", "failed", "stopped", "succeeded"}
@@ -78,7 +78,7 @@ async def run(prompt: str, *, tool_log=None, world_state=None, scene=None, arch=
     # (MISTY_IP unset), so stub tests are unaffected. Raises config.RobotUnreachable on failure.
     config.preflight_robot()
     tool_log = tool_log or DEFAULT_TOOL_LOG
-    world_state = world_state or DEFAULT_WORLD_STATE
+    world_state = world_state or config.belief_store_path()  # sim uses a separate per-scene file
 
     seen_tool_uses, final_text = [], None
     pending, started, completed = set(), set(), set()  # background task IDs
