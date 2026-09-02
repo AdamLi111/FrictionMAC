@@ -98,7 +98,7 @@ def build_agents() -> dict:
     return {
         # ---------------- World-Understanding cluster ----------------
         "object-lookup": AgentDefinition(
-            description=("The sole perceiver. Locates an object from world memory or by looking "
+            description=("The perceiver. Locates an object from world memory or by looking "
                          "(capture_view + turning to look around, given the camera's narrow "
                          "~45° FOV) and reports its direction and surroundings."),
             prompt=config.read_steering("v1/object_lookup.md"),

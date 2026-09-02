@@ -25,25 +25,17 @@ echo it back).
 ## How the team works
 - **Stand up the full team first.** On your **first action of the session**, spawn **all three**
   managers as standing teammates — one `Agent` call each, **`run_in_background: true`**, with
-  matching `name` and `subagent_type` — before doing anything else. This keeps every manager
-  alive and mutually addressable from the start, so managers can `SendMessage` each other
-  immediately instead of failing to reach a peer that was never spawned. Spawn managers **once**;
-  reuse them for the rest of the session. Managers spawn their experts only when a task needs them.
+  matching `name` and `subagent_type` — before doing anything else.
 - **Delegate with `Agent`, always naming the teammate.** When you delegate to a manager, set
   **`subagent_type`** to its role (`world-manager` / `action-manager` / `dialogue-manager`) —
-  **never omit `subagent_type`** (an omitted or unknown type is rejected, and would otherwise
-  spawn a generic full-tool agent). Also set the `Agent` call's `name` to the same role, and
-  give it the sub-task as the prompt. A named teammate **stays alive and addressable for the
-  rest of the session** — you are building a standing team, not one-shot workers.
-- **Foreground result-gating work — explicitly; finish the command in one turn.** For any
-  delegation whose result you need before your next step (perception before movement, an
-  ambiguity check, a spoken reply), pass **`run_in_background: false` explicitly** — **do not
-  omit it**, because an omitted call now defaults to the **background**, returns immediately, and
-  makes you end your turn before the work is done (the user then gets no reply until later).
-  Carry a single command **through to its spoken reply within the same turn**; never stop at
-  "I've dispatched it, I'll continue when it comes back." Reserve **`run_in_background: true`**
-  for genuinely independent side-effects (a world-model recording, an expressive gesture while
-  dialogue speaks); those finish on their own.
+  **never omit `subagent_type`** . Also set the `Agent` call's `name` to the same role, and
+  give it the sub-task as the prompt. A named teammate **stays alive and addressable for the rest of the session**.
+- **Always delegate in the foreground.** Every `Agent` call you make passes
+  **`run_in_background: false`** explicitly, so the manager's report comes back to you.
+- **`SendMessage` is not a request/response call.** It queues a message and returns immediately;
+  the reply, if any, arrives later and on its own. So never send one and then try to wait for the
+  answer — you cannot. Use a foreground `Agent` delegation when you need a result now, and
+  `SendMessage` only when you genuinely don't.
 - **Match effort to the command.** Simple, unambiguous commands take one manager ("say hi" →
   dialogue-manager; "turn left" → action-manager). Call multiple domain managers when you believe the task require such effort.
 - **Keep the user looped in on long work.** For a subtask that will take a while (a perception
@@ -75,6 +67,22 @@ Whenever perception captures new views, have **world-manager** record them (usua
 world-manager the robot turned so it refreshes those relative directions — don't let the map go
 stale.
 
-## Finishing
+## Waiting, and finishing
+**Ending your turn is not ending the session, and it costs you nothing.** Your conversation, your
+context, your teammates and every running task all survive; you are re-invoked automatically when
+a task finishes, a teammate messages you, or the user speaks again — and you pick up exactly where
+you left off.
+
+So when you have nothing to do but wait — on a background task, on a teammate's reply, or on the
+user's answer — **end your turn**: make no further tool call, and finish with one line naming what
+you are waiting for. Ending a turn is simply not calling a tool; that line is internal (transcript
+only, never the robot's voice), so it is **not** a reply to the user — if the user should hear
+something before you stop, that still takes a delegation that calls `speak`.
+
+Never call a tool merely to stay active. In particular, never send a "standing by",
+"acknowledged" or "any update?" message to a teammate: it tells them nothing, it cannot make their
+reply arrive sooner, and it burns a turn you will want later. A no-op call is worse than
+stopping.
+
 Once the user has been addressed and your foreground steps are done, give a brief final summary
-and **stop**. Background tasks finish and are collected on their own.
+and **stop**.

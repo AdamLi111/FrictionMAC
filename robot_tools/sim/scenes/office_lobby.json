@@ -1,0 +1,373 @@
+{
+  "name": "office_lobby",
+  "robot": {
+    "position": [
+      -1.5,
+      0.0
+    ],
+    "heading": 0
+  },
+  "fov_degrees": 45,
+  "max_view_distance": 8.0,
+  "robot_radius": 0.12,
+  "objects": [
+    {
+      "name": "desk",
+      "shape": {
+        "type": "rect",
+        "min": [
+          -2.7,
+          2.2
+        ],
+        "max": [
+          -1.4,
+          2.9
+        ]
+      },
+      "room": "office",
+      "properties": {}
+    },
+    {
+      "name": "monitor",
+      "shape": {
+        "type": "point",
+        "position": [
+          -2.05,
+          2.1
+        ],
+        "radius": 0.06
+      },
+      "room": "office",
+      "properties": {
+        "color": "black"
+      }
+    },
+    {
+      "name": "keyboard",
+      "shape": {
+        "type": "point",
+        "position": [
+          -1.7,
+          2.05
+        ],
+        "radius": 0.06
+      },
+      "room": "office",
+      "properties": {}
+    },
+    {
+      "name": "coffee mug",
+      "shape": {
+        "type": "point",
+        "position": [
+          -1.45,
+          1.7
+        ],
+        "radius": 0.06
+      },
+      "room": "office",
+      "properties": {
+        "color": "white"
+      }
+    },
+    {
+      "name": "office chair",
+      "shape": {
+        "type": "rect",
+        "min": [
+          -2.25,
+          1.0
+        ],
+        "max": [
+          -1.85,
+          1.5
+        ]
+      },
+      "room": "office",
+      "properties": {}
+    },
+    {
+      "name": "filing cabinet",
+      "shape": {
+        "type": "rect",
+        "min": [
+          -2.75,
+          -0.5
+        ],
+        "max": [
+          -2.35,
+          0.4
+        ]
+      },
+      "room": "office",
+      "properties": {}
+    },
+    {
+      "name": "trash bin",
+      "shape": {
+        "type": "point",
+        "position": [
+          -0.5,
+          0.7
+        ],
+        "radius": 0.06
+      },
+      "room": "office",
+      "properties": {
+        "color": "gray"
+      }
+    },
+    {
+      "name": "potted plant",
+      "shape": {
+        "type": "point",
+        "position": [
+          -2.7,
+          3.6
+        ],
+        "radius": 0.06
+      },
+      "room": "office",
+      "properties": {
+        "color": "green"
+      }
+    },
+    {
+      "name": "reception desk",
+      "shape": {
+        "type": "rect",
+        "min": [
+          0.7,
+          2.5
+        ],
+        "max": [
+          2.3,
+          3.1
+        ]
+      },
+      "room": "lobby",
+      "properties": {}
+    },
+    {
+      "name": "sofa",
+      "shape": {
+        "type": "rect",
+        "min": [
+          2.15,
+          0.4
+        ],
+        "max": [
+          2.75,
+          1.9
+        ]
+      },
+      "room": "lobby",
+      "properties": {}
+    },
+    {
+      "name": "coffee table",
+      "shape": {
+        "type": "rect",
+        "min": [
+          1.1,
+          0.7
+        ],
+        "max": [
+          1.8,
+          1.3
+        ]
+      },
+      "room": "lobby",
+      "properties": {}
+    },
+    {
+      "name": "magazine",
+      "shape": {
+        "type": "point",
+        "position": [
+          1.45,
+          0.6
+        ],
+        "radius": 0.06
+      },
+      "room": "lobby",
+      "properties": {
+        "color": "red"
+      }
+    },
+    {
+      "name": "water cooler",
+      "shape": {
+        "type": "point",
+        "position": [
+          0.4,
+          3.4
+        ],
+        "radius": 0.06
+      },
+      "room": "lobby",
+      "properties": {
+        "color": "blue"
+      }
+    },
+    {
+      "name": "potted plant",
+      "shape": {
+        "type": "point",
+        "position": [
+          2.7,
+          3.6
+        ],
+        "radius": 0.06
+      },
+      "room": "lobby",
+      "properties": {
+        "color": "green"
+      }
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            -3,
+            -1
+          ],
+          [
+            0,
+            -1
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "office"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            -3,
+            -1
+          ],
+          [
+            -3,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "office"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            -3,
+            4
+          ],
+          [
+            0,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "office"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            0,
+            -1
+          ],
+          [
+            0,
+            1
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "office"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            0,
+            2
+          ],
+          [
+            0,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "office"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            0,
+            -1
+          ],
+          [
+            3,
+            -1
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "lobby"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            3,
+            -1
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "lobby"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            0,
+            4
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "lobby"
+    }
+  ]
+}

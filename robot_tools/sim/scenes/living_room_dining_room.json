@@ -1,0 +1,363 @@
+{
+  "name": "living_room_dining_room",
+  "robot": {
+    "position": [
+      -1.5,
+      0.0
+    ],
+    "heading": 0
+  },
+  "fov_degrees": 45,
+  "max_view_distance": 8.0,
+  "robot_radius": 0.12,
+  "objects": [
+    {
+      "name": "sofa",
+      "shape": {
+        "type": "rect",
+        "min": [
+          -2.75,
+          2.6
+        ],
+        "max": [
+          -0.8,
+          3.3
+        ]
+      },
+      "room": "living room",
+      "properties": {}
+    },
+    {
+      "name": "coffee table",
+      "shape": {
+        "type": "rect",
+        "min": [
+          -1.9,
+          1.3
+        ],
+        "max": [
+          -1.1,
+          2.0
+        ]
+      },
+      "room": "living room",
+      "properties": {}
+    },
+    {
+      "name": "magazine",
+      "shape": {
+        "type": "point",
+        "position": [
+          -1.5,
+          1.2
+        ],
+        "radius": 0.06
+      },
+      "room": "living room",
+      "properties": {
+        "color": "red"
+      }
+    },
+    {
+      "name": "tv",
+      "shape": {
+        "type": "rect",
+        "min": [
+          -2.8,
+          0.4
+        ],
+        "max": [
+          -2.6,
+          1.6
+        ]
+      },
+      "room": "living room",
+      "properties": {}
+    },
+    {
+      "name": "armchair",
+      "shape": {
+        "type": "rect",
+        "min": [
+          -0.9,
+          1.0
+        ],
+        "max": [
+          -0.5,
+          1.5
+        ]
+      },
+      "room": "living room",
+      "properties": {}
+    },
+    {
+      "name": "floor lamp",
+      "shape": {
+        "type": "point",
+        "position": [
+          -0.6,
+          2.6
+        ],
+        "radius": 0.06
+      },
+      "room": "living room",
+      "properties": {
+        "color": "yellow"
+      }
+    },
+    {
+      "name": "dining table",
+      "shape": {
+        "type": "rect",
+        "min": [
+          0.9,
+          1.6
+        ],
+        "max": [
+          2.4,
+          3.0
+        ]
+      },
+      "room": "dining room",
+      "properties": {}
+    },
+    {
+      "name": "dining chair",
+      "shape": {
+        "type": "rect",
+        "min": [
+          0.5,
+          1.9
+        ],
+        "max": [
+          0.85,
+          2.3
+        ]
+      },
+      "room": "dining room",
+      "properties": {}
+    },
+    {
+      "name": "dining chair",
+      "shape": {
+        "type": "rect",
+        "min": [
+          2.45,
+          1.9
+        ],
+        "max": [
+          2.8,
+          2.3
+        ]
+      },
+      "room": "dining room",
+      "properties": {}
+    },
+    {
+      "name": "dining chair",
+      "shape": {
+        "type": "rect",
+        "min": [
+          1.4,
+          1.1
+        ],
+        "max": [
+          1.75,
+          1.45
+        ]
+      },
+      "room": "dining room",
+      "properties": {}
+    },
+    {
+      "name": "sideboard",
+      "shape": {
+        "type": "rect",
+        "min": [
+          0.4,
+          3.4
+        ],
+        "max": [
+          2.4,
+          3.9
+        ]
+      },
+      "room": "dining room",
+      "properties": {}
+    },
+    {
+      "name": "wine bottle",
+      "shape": {
+        "type": "point",
+        "position": [
+          1.4,
+          3.3
+        ],
+        "radius": 0.06
+      },
+      "room": "dining room",
+      "properties": {
+        "color": "green"
+      }
+    },
+    {
+      "name": "fruit bowl",
+      "shape": {
+        "type": "point",
+        "position": [
+          1.65,
+          1.5
+        ],
+        "radius": 0.06
+      },
+      "room": "dining room",
+      "properties": {
+        "color": "red"
+      }
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            -3,
+            -1
+          ],
+          [
+            0,
+            -1
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "living room"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            -3,
+            -1
+          ],
+          [
+            -3,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "living room"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            -3,
+            4
+          ],
+          [
+            0,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "living room"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            0,
+            -1
+          ],
+          [
+            0,
+            1
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "living room"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            0,
+            2
+          ],
+          [
+            0,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "living room"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            0,
+            -1
+          ],
+          [
+            3,
+            -1
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "dining room"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            3,
+            -1
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "dining room"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            0,
+            4
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "dining room"
+    }
+  ]
+}

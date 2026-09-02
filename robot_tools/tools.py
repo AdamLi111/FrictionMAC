@@ -1,5 +1,5 @@
 """
-The 14 robot tools (plain callables).
+The 16 robot tools (plain callables).
 
 Every tool is wrapped by @_tool: it logs one JSONL line per call ({name, args, result,
 timestamp}), redacts image-bearing results, and never raises (errors become
@@ -161,10 +161,18 @@ def move_head(pitch: float = 0.0, roll: float = 0.0, yaw: float = 0.0, velocity:
     return {"ok": True, "pitch": pitch, "roll": roll, "yaw": yaw}
 
 
+# Face images. CONFIRMED_* are verified present on this deployment's robot; STANDARD_* are the
+# stock Misty defaults that should exist but are not verified here. Names are case-sensitive and
+# must exist on the robot or the face silently won't change. Single source of truth: server.py
+# builds display_image's tool description from these, and no steering file repeats them.
+CONFIRMED_FACE_IMAGES = ("e_Amazement.jpg", "e_Surprise.jpg", "e_SleepingZZZ.jpg")
+STANDARD_FACE_IMAGES = ("e_Joy.jpg", "e_Love.jpg", "e_Sadness.jpg", "e_Anger.jpg", "e_Fear.jpg",
+                        "e_DefaultContent.jpg", "e_Disgust.jpg", "e_Rage.jpg")
+
+
 @_tool()
 def display_image(image_name: str) -> dict:
-    """Show a face image (e.g. Misty's built-in eye images: 'e_Joy.jpg', 'e_Anger.jpg',
-    'e_Sadness.jpg', 'e_Surprise.jpg', 'e_DefaultContent.jpg')."""
+    """Show a face image. See CONFIRMED_FACE_IMAGES / STANDARD_FACE_IMAGES above."""
     with runtime.motor_lock("FACE"):
         runtime.get_robot().display_image(fileName=image_name)
     return {"ok": True, "image_name": image_name}

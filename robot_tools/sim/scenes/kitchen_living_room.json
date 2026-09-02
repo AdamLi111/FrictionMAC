@@ -1,0 +1,371 @@
+{
+  "name": "kitchen_living_room",
+  "robot": {
+    "position": [
+      -1.5,
+      0.0
+    ],
+    "heading": 0
+  },
+  "fov_degrees": 45,
+  "max_view_distance": 8.0,
+  "robot_radius": 0.12,
+  "objects": [
+    {
+      "name": "kitchen island",
+      "shape": {
+        "type": "rect",
+        "min": [
+          -2.0,
+          1.5
+        ],
+        "max": [
+          -1.0,
+          2.3
+        ]
+      },
+      "room": "kitchen",
+      "properties": {}
+    },
+    {
+      "name": "cutting board",
+      "shape": {
+        "type": "point",
+        "position": [
+          -1.5,
+          1.4
+        ],
+        "radius": 0.06
+      },
+      "room": "kitchen",
+      "properties": {}
+    },
+    {
+      "name": "counter",
+      "shape": {
+        "type": "rect",
+        "min": [
+          -2.8,
+          3.3
+        ],
+        "max": [
+          -0.6,
+          3.9
+        ]
+      },
+      "room": "kitchen",
+      "properties": {}
+    },
+    {
+      "name": "fridge",
+      "shape": {
+        "type": "rect",
+        "min": [
+          -2.8,
+          -0.5
+        ],
+        "max": [
+          -2.3,
+          0.6
+        ]
+      },
+      "room": "kitchen",
+      "properties": {}
+    },
+    {
+      "name": "stove",
+      "shape": {
+        "type": "point",
+        "position": [
+          -1.8,
+          3.2
+        ],
+        "radius": 0.06
+      },
+      "room": "kitchen",
+      "properties": {
+        "color": "black"
+      }
+    },
+    {
+      "name": "sink",
+      "shape": {
+        "type": "point",
+        "position": [
+          -1.0,
+          3.2
+        ],
+        "radius": 0.06
+      },
+      "room": "kitchen",
+      "properties": {}
+    },
+    {
+      "name": "coffee maker",
+      "shape": {
+        "type": "point",
+        "position": [
+          -2.4,
+          3.2
+        ],
+        "radius": 0.06
+      },
+      "room": "kitchen",
+      "properties": {}
+    },
+    {
+      "name": "bar stool",
+      "shape": {
+        "type": "rect",
+        "min": [
+          -1.25,
+          0.9
+        ],
+        "max": [
+          -0.95,
+          1.2
+        ]
+      },
+      "room": "kitchen",
+      "properties": {}
+    },
+    {
+      "name": "sofa",
+      "shape": {
+        "type": "rect",
+        "min": [
+          0.5,
+          2.9
+        ],
+        "max": [
+          2.4,
+          3.6
+        ]
+      },
+      "room": "living room",
+      "properties": {}
+    },
+    {
+      "name": "coffee table",
+      "shape": {
+        "type": "rect",
+        "min": [
+          1.1,
+          1.4
+        ],
+        "max": [
+          1.9,
+          2.1
+        ]
+      },
+      "room": "living room",
+      "properties": {}
+    },
+    {
+      "name": "remote",
+      "shape": {
+        "type": "point",
+        "position": [
+          1.5,
+          1.3
+        ],
+        "radius": 0.06
+      },
+      "room": "living room",
+      "properties": {
+        "color": "black"
+      }
+    },
+    {
+      "name": "tv",
+      "shape": {
+        "type": "rect",
+        "min": [
+          2.55,
+          0.6
+        ],
+        "max": [
+          2.75,
+          1.8
+        ]
+      },
+      "room": "living room",
+      "properties": {}
+    },
+    {
+      "name": "bookshelf",
+      "shape": {
+        "type": "rect",
+        "min": [
+          0.35,
+          0.4
+        ],
+        "max": [
+          0.75,
+          1.8
+        ]
+      },
+      "room": "living room",
+      "properties": {}
+    },
+    {
+      "name": "potted plant",
+      "shape": {
+        "type": "point",
+        "position": [
+          2.6,
+          3.4
+        ],
+        "radius": 0.06
+      },
+      "room": "living room",
+      "properties": {
+        "color": "green"
+      }
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            -3,
+            -1
+          ],
+          [
+            0,
+            -1
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "kitchen"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            -3,
+            -1
+          ],
+          [
+            -3,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "kitchen"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            -3,
+            4
+          ],
+          [
+            0,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "kitchen"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            0,
+            -1
+          ],
+          [
+            0,
+            1
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "kitchen"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            0,
+            2
+          ],
+          [
+            0,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "kitchen"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            0,
+            -1
+          ],
+          [
+            3,
+            -1
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "living room"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            3,
+            -1
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "living room"
+    },
+    {
+      "name": "wall",
+      "shape": {
+        "type": "segment",
+        "points": [
+          [
+            0,
+            4
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "thickness": 0.1
+      },
+      "room": "living room"
+    }
+  ]
+}

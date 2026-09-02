@@ -3,7 +3,7 @@
 A multi-agent robot system for the Misty II, built on the **Claude Agent SDK**. Two layers,
 two Python environments, talking over MCP:
 
-- **`robot_tools/`** — a standalone **MCP server** (17 tools) wrapping Misty's real
+- **`robot_tools/`** — a standalone **MCP server** (16 tools) wrapping Misty's real
   capabilities: movement, expression, speech, vision, and persistent world memory. Runs in
   the robot env (`.venv`).
 - **`agent_runtime/`** — a **Director** agent that delegates to six domain-expert subagents,
@@ -14,22 +14,28 @@ two Python environments, talking over MCP:
 Robot access has two modes, chosen by `MISTY_IP`: **real** (fails loudly if unreachable) or
 **stub** (`ROBOT_STUB=1`, or simply no `MISTY_IP` — fakes all robot calls for offline dev).
 
-## The 17 robot tools (`mcp__robot__*`)
+## The 16 robot tools (`mcp__robot__*`)
 
 | Group | Tools |
 |---|---|
 | Movement (DRIVE) | `move_forward`, `move_backward`, `turn_left`, `turn_right`, `stop` |
 | Expression (ARM_LEFT/ARM_RIGHT/HEAD/FACE/LED) | `move_arm`, `move_head`, `display_image`, `change_led`, `reset_pose` |
 | Speech | `speak(text, friction_type)` |
-| Vision | `capture_view`, `get_last_view`, `find_object` |
+| Vision | `capture_view`, `get_last_view` |
 | World memory | `get_known_location`, `update_world`, `get_world` |
 
 - **Concurrency + locks:** server tool calls are offloaded to threads, and each physical
   motor resource has its own lock — calls on the *same* motor serialize (e.g. a 360° scan vs.
   driving), calls on *different* motors run concurrently. The two arms are independent locks.
 - **Vision** returns real image content the agent (a VLM) reasons over; no VLM runs in the
-  server. `find_object` does a 360° scan (4 views); `get_last_view` re-serves the last
-  capture's frames with **no new scan**.
+  server. `capture_view` shoots one frame of what's directly ahead (narrow ~45° FOV — to see
+  elsewhere, turn first); `get_last_view` re-serves the last capture's frames with **no new
+  shot and no motor**. In **sim** mode both return a synthetic text POV instead of an image.
+- **Tool descriptions are the agent-facing contract.** An agent holding a tool has its
+  description + JSON Schema resident on every inference and never sees `tools.py`, so ranges,
+  units, sign conventions and valid values live in [`server.py`](robot_tools/server.py) —
+  interpolated from the clamp constants in [`tools.py`](robot_tools/tools.py) so a stated limit
+  can't drift from the enforced one. Steering files must not restate them.
 - **Speech** is one tool; `friction_type` is required (`none` or one of the five positive-
   friction types) and is the logged record of friction applied.
 - Every tool call logs one JSONL line `{timestamp, name, args, result}`; image results are

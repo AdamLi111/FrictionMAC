@@ -102,7 +102,7 @@ def robot_mcp_config(tool_log_path: Path, world_state_path: Path, scene: str | N
     }
 
 
-# All 14 robot tools, namespaced. Handy for allowed_tools / per-expert scoping.
+# All 16 robot tools, namespaced. Handy for allowed_tools / per-expert scoping.
 def robot_tool(name: str) -> str:
     return f"mcp__{ROBOT_SERVER}__{name}"
 
