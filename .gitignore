@@ -10,3 +10,4 @@ temp_images/
 .claude/
 .qodo/
 .scenes/
+.DS_Store
