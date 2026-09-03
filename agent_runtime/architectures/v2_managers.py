@@ -1,19 +1,22 @@
 """
-V2 — Director + Domain Managers + experts, as a live agent team.
+V2 — Director + Domain Managers + experts, as named, mutually-addressable subagents.
 
 A mid-layer of three Domain Managers sits between the Director and the six experts:
   Director  --Agent-->  {world,action,dialogue}-manager  --Agent-->  their experts
 
-All eleven agents run as **named, persistent teammates in a single team** (CLI agent-teams
-mode). On top of the delegation hierarchy that carries tasks DOWN, any teammate can talk to
-any other DIRECTLY via `SendMessage`, which is how the lateral/upward coordination happens:
-  - managers <-> managers  (coordination)
-  - experts  <-> experts    (e.g. object-lookup asks map about ambiguity)
-  - expert -> manager -> Director -> dialogue/friction -> user  (information requests)
+Every agent is spawned with a `name`, which makes it addressable by `SendMessage` and
+resumable: messaging an idle agent reloads its stored transcript and runs a fresh turn, so a
+manager keeps its context across tasks. That is what carries coordination sideways and upward,
+on top of the `Agent` hierarchy that carries tasks down:
+  - managers <-> managers  (coordination; needs the env flag below)
+  - expert -> its manager  (information requests, then escalated to the Director if needed)
 No approval gate: experts call their tools directly once their manager assigns the task.
 
-The whole team is enabled by one CLI env flag; everything else reuses the shared assembly in
-`Architecture.build_options`.
+These are SUBAGENTS, not a Claude Code "agent team" -- agent teams need an interactive session
+and are never formed from an Agent SDK session (no ~/.claude/teams or ~/.claude/tasks is ever
+written). The env flag in `subprocess_env` buys one specific thing: cross-agent name
+resolution, without which peer-to-peer messaging fails. Everything else reuses the shared
+assembly in `Architecture.build_options`.
 """
 from agent_runtime import config, experts, managers
 from agent_runtime.architectures.base import Architecture
@@ -42,9 +45,16 @@ class DomainManagerArchitecture(Architecture):
 
     def subprocess_env(self) -> dict:
         return {
-            # Turn on the CLI's agent-teams / SendMessage machinery (env flag only; the
-            # --agent-teams CLI flag is rejected in headless SDK mode). Verified working on
-            # CLI 2.1.211 + SDK 0.2.120 via scripts/team_probe.py.
+            # Enables cross-agent name resolution, which PEER-TO-PEER SendMessage needs: with
+            # the flag off, an agent messaging another agent it did not itself spawn fails with
+            # "No agent named '<x>' is reachable" and only raw agentIds work. Spawner->child
+            # addressing works either way, so the flag matters precisely for manager<->manager
+            # traffic. Reproduce both directions with scripts/team_probe.py (TEAMS_FLAG=0|1).
+            #
+            # NOTE: this does NOT create a Claude Code "agent team". Agent teams require an
+            # interactive session and are never formed from an Agent SDK session, so no team
+            # config, task list or mailbox is created (~/.claude/teams and ~/.claude/tasks stay
+            # absent). These agents are named SUBAGENTS that can message and resume each other.
             "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
             # Director(main) -> manager(1) -> expert(2) is within the default depth of 3; set
             # 4 for headroom so nested spawns never silently fail.

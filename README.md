@@ -65,22 +65,26 @@ touches nothing else. New variants (V3, …) drop in as another subclass + regis
 | `AGENT_ARCH` | Topology | Notes |
 |---|---|---|
 | `v1` (default) | **Flat:** Director → 6 experts (3 clusters) | Original design. Only experts actuate; speech is gated propose → approve → speak. |
-| `v2` | **Managers:** Director → 3 Domain Managers → 6 experts, as a live agent **team** | A mid-layer of Domain Managers (World-Understanding / Action-Space / Dialogue) parses and re-delegates. All 9 agents are **named, persistent teammates in one team**: any can talk to any other directly via **`SendMessage`** (manager↔manager, expert↔expert, and expert→manager→Director→friction→user info-requests). Managers coordinate only (no robot tools); actuation stays at the experts. **No approval gate.** The two perceivers (`object-lookup`, `map`) are spawned **fresh per task** (never resumed) so camera frames don't accumulate. |
-| `v3` | **Single agent:** one agent holds **all** the tools and talks to the user directly | No delegation, no subagents, no teams — one agent perceives, reasons, moves, expresses, keeps the world model, and speaks itself. The baseline the multi-agent variants are compared against. |
+| `v2` | **Managers:** Director → 3 Domain Managers → 6 experts, mutually addressable | A mid-layer of Domain Managers (World-Understanding / Action-Space / Dialogue) parses and re-delegates. Every agent is spawned with a `name`, which makes it **addressable by `SendMessage` and resumable** — messaging an idle agent reloads its transcript, so a manager keeps context across tasks. Coordination flows sideways (manager↔manager) on top of the `Agent` hierarchy that carries tasks down. Managers coordinate only (no robot tools); actuation stays at the experts. **No approval gate.** The two perceivers (`object-lookup`, `map`) are spawned **fresh per task** (never resumed) so camera frames don't accumulate. |
+| `v3` | **Single agent:** one agent holds **all** the tools and talks to the user directly | No delegation, no subagents — one agent perceives, reasons, moves, expresses, keeps the world model, and speaks itself. The baseline the multi-agent variants are compared against. |
 | `v4` | **Flat, no approval:** Director → 6 experts (3 clusters) | Same topology as `v1`, but **every approval gate removed** — dialogue agents speak directly and navigation plans-and-drives directly (no propose → approve step). Isolates the effect of the approval gate against `v1`. |
 
-- **v2 requires CLI agent-teams mode**, which the architecture enables automatically by setting
-  `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` on the CLI subprocess (env flag only — the
-  `--agent-teams` flag is rejected in headless mode). Verified working on **CLI 2.1.211 + SDK
-  0.2.120**; reproduce with [`scripts/team_probe.py`](scripts/team_probe.py), a self-contained
-  round-trip test of live peer messaging.
+- **These are named subagents, not a Claude Code "agent team".** Agent teams require an
+  interactive session and are never formed from an Agent SDK session, so no team config, shared
+  task list or mailbox is created (`~/.claude/teams` and `~/.claude/tasks` stay absent).
+- **v2 still needs `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`**, which the architecture sets on the
+  CLI subprocess automatically, for one specific reason: **cross-agent name resolution**. With the
+  flag off, an agent messaging another agent it did not itself spawn fails with
+  `No agent named '<x>' is reachable`, and only raw agentIds work — so manager↔manager traffic
+  breaks while Director→manager keeps working. Reproduce both directions with
+  [`scripts/team_probe.py`](scripts/team_probe.py) (`TEAMS_FLAG=0` fails, `TEAMS_FLAG=1` passes).
+  Verified on **CLI 2.1.211 + SDK 0.2.120**.
 - v2 raises the top-level turn budget and the subagent spawn depth
   (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=4`) for the extra tier.
 - The one hop that is **not** a `SendMessage` is manager → Director escalation: a manager that
   needs the user consulted finishes its task with `STATUS: NEED_USER_INFO: <question>`, which the
   Director resolves (via the dialogue-manager → friction → user), then re-delegates — the same
-  reliable return-and-continue channel V1 uses, since the Director is the team lead rather than a
-  named teammate.
+  reliable return-and-continue channel V1 uses.
 
 ## Run
 

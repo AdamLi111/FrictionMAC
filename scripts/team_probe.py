@@ -1,10 +1,17 @@
 """
-Peer-messaging probe for the Claude Agent SDK + CLI (agent-teams / SendMessage).
+Peer-messaging probe for the Claude Agent SDK + CLI (named subagents / SendMessage).
 
-Decisive test: two persistent named teammates are spawned. `seeker` is told it does
-NOT know a secret codeword and MUST obtain it from teammate `keeper` using SendMessage.
-Only `keeper`'s system prompt contains the codeword. If the codeword round-trips back,
-live peer->peer messaging works on THIS machine's SDK+CLI. Otherwise it doesn't.
+Decisive test: two named subagents are spawned. `seeker` is told it does NOT know a secret
+codeword and MUST obtain it from `keeper` using SendMessage. Only `keeper`'s system prompt
+contains the codeword. If the codeword round-trips back, live peer->peer messaging works on
+THIS machine's SDK+CLI. Otherwise it doesn't.
+
+NOTE: this exercises SUBAGENT messaging, not Claude Code "agent teams". Agent teams need an
+interactive session and are never created from an Agent SDK session, so no team/mailbox is
+involved here. Run with TEAMS_FLAG=0 to confirm CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS is not
+required for any of this:
+
+    TEAMS_FLAG=0 .venv-agent/bin/python -m scripts.team_probe
 """
 import functools
 import os
@@ -76,7 +83,8 @@ def build_options():
         max_turns=60,
         env={
             **os.environ,
-            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+            # Default "1" preserves the historical probe; TEAMS_FLAG=0 shows it is not needed.
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": os.environ.get("TEAMS_FLAG", "1"),
             "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "4",
         },
     )
@@ -104,7 +112,9 @@ async def main():
     started = set()
     t0 = time.monotonic()
 
-    print(f"[probe] CLI={config.find_cli()}  teams=ON  secret={SECRET}")
+    flag = os.environ.get("TEAMS_FLAG", "1")
+    print(f"[probe] CLI={config.find_cli()}  "
+          f"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS={flag}  secret={SECRET}")
     async with ClaudeSDKClient(options=opts) as client:
         await client.query("Run the codeword relay and report the codeword seeker got.")
         last_msg = time.monotonic()
