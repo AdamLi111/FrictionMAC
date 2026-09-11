@@ -11,6 +11,10 @@ two Python environments, talking over MCP:
   `claude-agent-sdk`). Ships **four selectable architectures** (see below); pick one with
   `AGENT_ARCH`.
 
+On top of those sits **`evaluation/`** — a task list and a simulated user, for running the whole
+system at scale against the offline simulation instead of by hand. See
+[Experiments](#experiments-the-task-list--a-simulated-user).
+
 Robot access has two modes, chosen by `MISTY_IP`: **real** (fails loudly if unreachable) or
 **stub** (`ROBOT_STUB=1`, or simply no `MISTY_IP` — fakes all robot calls for offline dev).
 
@@ -121,6 +125,9 @@ fully offline.
 
 `LOG_LEVEL` (`INFO` | `DEBUG` | `FULL`, default `DEBUG`) sets the transcript verbosity written
 to `data/hw_session_<ts>.<level>.log`. The console shows only your input and Misty's speech.
+Every session also writes `data/hw_session_<ts>_story.txt` — the same events as a readable,
+per-agent narrative of who thought what (see
+[Reading what the agents were thinking](#reading-what-the-agents-were-thinking)).
 
 ## Simulation (offline world model)
 
@@ -151,6 +158,98 @@ ROBOT_SIM_SCENE=office_kitchen AGENT_ARCH=v4 .venv-agent/bin/python -m scripts.h
 - The sim world is **ground truth only** — separate from the agent's belief store
   (`get_world`/`update_world`), which the sim never writes.
 
+## Experiments: the task list + a simulated user
+
+A scene is a *world*; it says nothing about what should happen in it. [`evaluation/`](evaluation/)
+adds the layer on top: a **task list** where each task pairs one scene with a **goal**, and a
+**simulated user** (Claude Haiku) that holds that goal and talks to the robot. Same scene +
+different goal = a different task.
+
+```bash
+.venv-agent/bin/python -m evaluation.run_tasks --list                    # the task list
+.venv-agent/bin/python -m evaluation.run_tasks --validate                # check it vs the scenes
+AGENT_ARCH=v4 .venv-agent/bin/python -m evaluation.run_tasks             # run everything
+.venv-agent/bin/python -m evaluation.run_tasks --arch v1 --category referential_ambiguity
+.venv-agent/bin/python -m evaluation.run_tasks --task amb_001 --repeats 3
+```
+
+The **information asymmetry is the point**, and it runs both ways:
+
+- The **user is omniscient** — it gets the full ground-truth scene (every object in every room,
+  the robot's pose, and what is currently inside the robot's camera cone), refreshed every turn,
+  because a person in the room can look around. That view is
+  [`sim/omniscient.py`](robot_tools/sim/omniscient.py), the counterpart to the robot's narrow
+  [`sim/pov.py`](robot_tools/sim/pov.py). So it can answer **any** question the robot asks.
+- The **user only ever hears `speak`** — the Director's own message text, its delegations, and
+  every tool result are invisible to it. If a turn produces no `speak`, the user is told the robot
+  said nothing, and reacts like a person would.
+- **User utterances are underspecified on purpose.** Everyday requests to a robot leave out the
+  detail that would disambiguate them ("go over to the cup"), which is the pressure the system is
+  meant to handle; the user supplies the missing detail only when asked. The first utterance is
+  held to the bare category noun — no colour, side, room or size.
+- Only the user sees the **goal**. Nothing in the robot's context contains it, or the scene.
+- The user decides when it's over (goal met, or clearly stuck) and ends the episode; a
+  `max_user_turns` cap per task and a `--turn-timeout` per robot turn bound an unattended run.
+
+Tasks live in [`evaluation/task_list.json`](evaluation/task_list.json) (schema documented in the
+file's own `fields` block, loader in [`tasks.py`](evaluation/tasks.py)) — `task_id`, `scene`,
+`goal`, a `category` to filter on (referential ambiguity, cross-room navigation, occluded target,
+perception report, multi-step, absent object, expression, obstacle avoidance) and an optional
+`target` naming the scene object the goal centres on. `--validate` checks every task's scene
+loads and every `target` really exists in it.
+
+Each episode is **isolated** — its own scene, belief store, tool log and live sim-state file, so
+nothing leaks between tasks — and writes to `data/eval_<arch>_<ts>/`: `run.json` (the whole run,
+rewritten after every episode so a long run is inspectable while it goes), plus per episode
+`<task_id>_story.txt` (**the readable one** — see below), the dialogue and end reason
+(`<task_id>.json`), the flat Director-side transcript (`.log`), every tool call
+(`_tools.jsonl`) and the ground-truth world as the episode left it (`_sim.json` — final pose,
+collisions, action history: the hook a scorer would read).
+
+### Reading what the agents were thinking
+
+`<task_id>_story.txt` (and `data/hw_session_<ts>_story.txt` for console sessions) renders the same
+message stream as a story you can read top to bottom, written live so you can `tail -f` it. Every
+line is attributed and nested under the delegation it belongs to:
+
+```
+──── TURN 1 ─────────────────────────────────────────────────────── 00:42:10
+  USER ▶
+        Can you go look at the cup on the table?
+
+  DIRECTOR · thinking
+      The user wants me to go look at the cup on the table. …
+
+  DIRECTOR ▶ delegates to object-lookup  (foreground)
+      task: Locate and perceive the cup on the table
+      brief: Find and look at the cup on the table. Report its direction …
+
+     object-lookup · calls mcp__robot__capture_view()
+         → Directly ahead (~45° FOV): you can see 4 things in this narrow view —
+           - red cup (red): ~10° to your left, nearby.
+
+     object-lookup ▪ reports back to the Director
+         STATUS: MULTIPLE — I see two cups on the table …
+
+     🔊 MISTY SPEAKS   (friction: probing)
+         "I see a red cup to my left and a blue cup to my right. Which one …"
+
+  ── turn 1 ended · success · 32s · 2 delegation(s) · 8 tool call(s) · 1 utterance(s)
+```
+
+Attribution is exact, not guessed: `AssistantMessage.parent_tool_use_id` is `None` for the
+Director and otherwise the id of the `Agent` call that spawned the subagent, so
+[session.py](agent_runtime/session.py) records those ids and [narrative.py](agent_runtime/narrative.py)
+names every thought, tool call and report. Harness noise is dropped so it can't bury the
+reasoning — background-launch acks, `agentId`/token trailers, the `{"ok": true}` echo after a
+`speak`, and camera frames (a real-mode JPEG becomes `<camera frame, 34 KB>`). The flat `.log` is
+still written next to it, unabridged, for when you need the raw stream.
+
+The robot side is untouched: the runner drives the same architectures, steering, MCP tools and
+persistent-session turn semantics as `hw_console`, via the shared engine in
+[`agent_runtime/session.py`](agent_runtime/session.py). Only the input source changes — a
+simulated user instead of a keyboard.
+
 ## Config (env)
 
 | Var | Meaning | Default |
@@ -168,12 +267,23 @@ ROBOT_SIM_SCENE=office_kitchen AGENT_ARCH=v4 .venv-agent/bin/python -m scripts.h
 | `FRICTION_OFF` | `1` = gate positive-friction utterances (ablation) | unset (friction on) |
 | `LOG_LEVEL` | console transcript level: `INFO`/`DEBUG`/`FULL` | `DEBUG` |
 | `WORLD_STATE_PATH` / `TOOL_LOG_PATH` | world memory / tool-call log paths | under `data/` |
+| `SIM_STATE_PATH` | where the sim mirrors its live ground-truth world (the eval harness sets one per episode) | `data/sim_state.json` |
+| `SIM_USER_MODEL` | model backing the simulated user in `evaluation/` | `claude-haiku-4-5` |
+| `ANTHROPIC_API_KEY` | read from `.env`; the simulated user calls the Messages API directly | — |
 
 ## Test
 
 ```bash
-.venv/bin/python -m pytest              # robot-layer stub tests (no hardware, no agent)
+.venv/bin/python -m pytest              # robot-layer + task-list tests (no hardware, no agent)
 .venv-agent/bin/python -m scripts.step4_test on   # real-API friction test (stub robot)
+.venv-agent/bin/python -m evaluation.run_tasks --validate   # task list vs. the scenes
+```
+
+The agent env needs one extra package for the experiments (the simulated user talks to the
+Messages API directly, not through the Agent SDK):
+
+```bash
+.venv-agent/bin/pip install anthropic
 ```
 
 See [UNDERSTANDING.md](UNDERSTANDING.md) (Phase-1 tool-layer design) and

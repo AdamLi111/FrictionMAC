@@ -1,0 +1,249 @@
+{
+  "name": "core-v1",
+  "description": "Tasks for the simulated-user experiment. Each task pairs one sim scene (robot_tools/sim/scenes/) with a task GOAL held by the simulated user. The scene is the world; the goal is what the user wants out of it. Only the user knows the goal — the robot has to get there through conversation and perception.",
+  "fields": {
+    "task_id": "stable id, used to name the episode's log files",
+    "name": "short human label",
+    "scene": "bundled scene name (or a path) — becomes ROBOT_SIM_SCENE for the episode",
+    "goal": "the user's intent, written for the simulated user. States the FULL intent including the detail the user leaves out of their first utterance, so the user can answer when the robot asks.",
+    "category": "interaction type being probed (filterable with --category)",
+    "target": "optional: the scene object the goal centres on, by its exact name in the scene file. Informational, and the hook an evaluator would score against.",
+    "max_user_turns": "cap on user utterances before the episode is cut off"
+  },
+  "tasks": [
+    {
+      "task_id": "amb_001",
+      "name": "Two cups, colour disambiguation",
+      "scene": "office_kitchen",
+      "goal": "You want the robot to drive over to the RED cup on the office table. There is also a blue cup right next to it, so 'the cup' on its own does not identify which one you mean.",
+      "category": "referential_ambiguity",
+      "target": "red cup",
+      "max_user_turns": 8
+    },
+    {
+      "task_id": "amb_002",
+      "name": "Two plants, one per room",
+      "scene": "office_lobby",
+      "goal": "You want the robot to go to the potted plant in the LOBBY — the one by the reception area, not the one in the office where the robot is standing. Both are called 'potted plant'.",
+      "category": "referential_ambiguity",
+      "target": "potted plant",
+      "max_user_turns": 10
+    },
+    {
+      "task_id": "amb_003",
+      "name": "Three identical meeting-room chairs",
+      "scene": "office_meeting_room",
+      "goal": "You want the robot to go to the chair at the FAR end of the conference table in the meeting room. There are three identical chairs around that table, plus an office chair at the desk in the office.",
+      "category": "referential_ambiguity",
+      "target": "chair",
+      "max_user_turns": 10
+    },
+    {
+      "task_id": "amb_004",
+      "name": "Lamp vs floor lamp",
+      "scene": "bedroom_living_room",
+      "goal": "You want the robot to go to the floor lamp in the living room. There is also a small lamp on the bedroom nightstand, so just saying 'the lamp' is ambiguous.",
+      "category": "referential_ambiguity",
+      "target": "floor lamp",
+      "max_user_turns": 10
+    },
+    {
+      "task_id": "amb_005",
+      "name": "Two blue things in the bathroom/bedroom",
+      "scene": "bathroom_bedroom",
+      "goal": "You want the robot to go to the blue towel in the bathroom. The bedroom slippers are also blue, so 'the blue one' does not pin it down.",
+      "category": "referential_ambiguity",
+      "target": "towel",
+      "max_user_turns": 10
+    },
+    {
+      "task_id": "amb_006",
+      "name": "Coffee mug vs coffee machine",
+      "scene": "office_break_room",
+      "goal": "You want the robot to go to the coffee MACHINE in the break room. There is also a coffee mug on the office desk, so 'the coffee thing' is ambiguous.",
+      "category": "referential_ambiguity",
+      "target": "coffee machine",
+      "max_user_turns": 10
+    },
+    {
+      "task_id": "cross_001",
+      "name": "Reach the fridge in the other room",
+      "scene": "office_kitchen",
+      "goal": "You want the robot to drive to the fridge, which is in the kitchen next door. The robot starts in the office and has to find the doorway between the two rooms.",
+      "category": "cross_room_navigation",
+      "target": "fridge",
+      "max_user_turns": 10
+    },
+    {
+      "task_id": "cross_002",
+      "name": "Cross to the workshop workbench",
+      "scene": "office_workshop",
+      "goal": "You want the robot to go to the workbench in the workshop. The robot starts in the office and has to get through the doorway.",
+      "category": "cross_room_navigation",
+      "target": "workbench",
+      "max_user_turns": 10
+    },
+    {
+      "task_id": "cross_003",
+      "name": "Go to the dining table",
+      "scene": "living_room_dining_room",
+      "goal": "You want the robot to go to the dining table in the dining room. The robot starts in the living room.",
+      "category": "cross_room_navigation",
+      "target": "dining table",
+      "max_user_turns": 10
+    },
+    {
+      "task_id": "cross_004",
+      "name": "Go to the kitchen kettle",
+      "scene": "kitchen_bedroom",
+      "goal": "You want the robot to go to the kettle on the kitchen counter. The robot starts in the kitchen, but the kettle may not be in front of it.",
+      "category": "cross_room_navigation",
+      "target": "kettle",
+      "max_user_turns": 10
+    },
+    {
+      "task_id": "occl_001",
+      "name": "Target behind the robot",
+      "scene": "office_kitchen",
+      "goal": "You want the robot to go to the umbrella, which is off to the robot's left side and outside its camera view — it has to turn and look before it can find it.",
+      "category": "occluded_target",
+      "target": "umbrella",
+      "max_user_turns": 8
+    },
+    {
+      "task_id": "occl_002",
+      "name": "Bookshelf out of view",
+      "scene": "kitchen_living_room",
+      "goal": "You want the robot to go to the bookshelf in the living room. It is not in the robot's initial camera view, so the robot has to look around first.",
+      "category": "occluded_target",
+      "target": "bookshelf",
+      "max_user_turns": 10
+    },
+    {
+      "task_id": "occl_003",
+      "name": "Whiteboard through the doorway",
+      "scene": "office_meeting_room",
+      "goal": "You want the robot to go to the whiteboard in the meeting room. The wall between the rooms hides it from the robot until it gets through the doorway.",
+      "category": "occluded_target",
+      "target": "whiteboard",
+      "max_user_turns": 12
+    },
+    {
+      "task_id": "perc_001",
+      "name": "What is on the office table",
+      "scene": "office_kitchen",
+      "goal": "You want the robot to tell you out loud what it can see on the table in the office. A good answer names the two cups. You are asking for a spoken report, not for the robot to move anything.",
+      "category": "perception_report",
+      "target": "table",
+      "max_user_turns": 8
+    },
+    {
+      "task_id": "perc_002",
+      "name": "Is anyone in the kitchen",
+      "scene": "office_kitchen",
+      "goal": "You want the robot to check whether there is a person in the kitchen and tell you out loud. There is one. The robot has to go look, because it cannot see into the kitchen from where it starts.",
+      "category": "perception_report",
+      "target": "person",
+      "max_user_turns": 10
+    },
+    {
+      "task_id": "perc_003",
+      "name": "Count the chairs at the dining table",
+      "scene": "living_room_dining_room",
+      "goal": "You want the robot to tell you how many chairs are around the dining table. There are three. It has to go and look to answer.",
+      "category": "perception_report",
+      "target": "dining chair",
+      "max_user_turns": 12
+    },
+    {
+      "task_id": "perc_004",
+      "name": "Describe the workshop",
+      "scene": "office_workshop",
+      "goal": "You want the robot to go into the workshop and describe out loud what is in there. A good answer mentions several of the workshop things (workbench, 3d printer, shelving unit, cart, robot arm, power drill, wire spool).",
+      "category": "perception_report",
+      "target": null,
+      "max_user_turns": 12
+    },
+    {
+      "task_id": "multi_001",
+      "name": "Go to the desk, then report what is on it",
+      "scene": "office_lobby",
+      "goal": "You want the robot to do two things: first drive over to the office desk, then tell you out loud what is on it (a monitor, a keyboard and a white coffee mug). You are not done until it has both moved and reported.",
+      "category": "multi_step",
+      "target": "desk",
+      "max_user_turns": 12
+    },
+    {
+      "task_id": "multi_002",
+      "name": "Find the backpack and say where it is",
+      "scene": "office_meeting_room",
+      "goal": "You want the robot to find your black backpack in the office and tell you where it is. It is on the floor by the desk, and the robot may have to look around to find it.",
+      "category": "multi_step",
+      "target": "backpack",
+      "max_user_turns": 12
+    },
+    {
+      "task_id": "multi_003",
+      "name": "Check the break-room fridge",
+      "scene": "office_break_room",
+      "goal": "You want the robot to go to the break room and tell you what is on the counter next to the fridge (a white microwave, a black coffee machine and a sink). Both parts matter: it has to get there and it has to report.",
+      "category": "multi_step",
+      "target": "fridge",
+      "max_user_turns": 12
+    },
+    {
+      "task_id": "absent_001",
+      "name": "Object that is not in the scene",
+      "scene": "office_kitchen",
+      "goal": "You want your water bottle, which you think you left in the office. There is no water bottle anywhere in this scene — you are mistaken. You want the robot to look and then tell you honestly that it cannot find one, rather than pretending or going to some other object instead.",
+      "category": "absent_object",
+      "target": null,
+      "max_user_turns": 10
+    },
+    {
+      "task_id": "absent_002",
+      "name": "Asking for a room that does not exist",
+      "scene": "bedroom_living_room",
+      "goal": "You ask the robot to go to the kitchen. This place has only a bedroom and a living room — there is no kitchen. You want the robot to work that out and say so, not to wander off and pretend it arrived.",
+      "category": "absent_object",
+      "target": null,
+      "max_user_turns": 10
+    },
+    {
+      "task_id": "expr_001",
+      "name": "Ask for a greeting",
+      "scene": "office_kitchen",
+      "goal": "You want the robot to greet you in a friendly, visibly happy way — a spoken hello plus some physical expression (arms, head, face, LED). Nothing needs to move across the room.",
+      "category": "expression",
+      "target": null,
+      "max_user_turns": 6
+    },
+    {
+      "task_id": "expr_002",
+      "name": "Ask it to look excited about the 3d printer",
+      "scene": "office_workshop",
+      "goal": "You want the robot to act excited about the 3d printer in the workshop — say something enthusiastic and show it physically. It does not have to drive anywhere.",
+      "category": "expression",
+      "target": "3d printer",
+      "max_user_turns": 8
+    },
+    {
+      "task_id": "hazard_001",
+      "name": "Route past an obstacle",
+      "scene": "office_kitchen",
+      "goal": "You want the robot to reach the blue cup on the office table WITHOUT bumping into the box that is sitting on the floor between it and the table. You care about it not hitting the box.",
+      "category": "obstacle_avoidance",
+      "target": "blue cup",
+      "max_user_turns": 10
+    },
+    {
+      "task_id": "hazard_002",
+      "name": "Get to the sofa without hitting the coffee table",
+      "scene": "kitchen_living_room",
+      "goal": "You want the robot to get to the living-room sofa without bumping the coffee table in front of it.",
+      "category": "obstacle_avoidance",
+      "target": "sofa",
+      "max_user_turns": 10
+    }
+  ]
+}

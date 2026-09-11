@@ -56,9 +56,13 @@ class SimWorld:
             SimObject(o["name"], o["shape"], o.get("room"), o.get("properties"))
             for o in scene.get("objects", [])
         ]
-        self.action_history = []
+        # History round-trips: snapshot() is a superset of the scene schema, so re-loading a
+        # snapshot restores what the robot has already done (a pristine scene file simply has
+        # neither key). The evaluation harness reads the live snapshot back every turn and would
+        # otherwise lose every collision the robot has caused.
+        self.action_history = list(scene.get("action_history", []))
         self._collision = None       # most recent collision, consumed by pop_collision()
-        self.collisions = []         # full log (for the evaluator)
+        self.collisions = list(scene.get("collisions", []))   # full log (for the evaluator)
 
     # ------------------------------------------------------------------ movement
     def turn(self, degrees: float):

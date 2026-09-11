@@ -8,7 +8,8 @@ of a JPEG. The same agents, steering, and MCP tools run unchanged against it.
 
 See scene.py for the scene schema (every entity, walls included, is an object with a `shape`).
 """
+from .omniscient import describe_world
 from .scene import load_scene
 from .world_model import SimWorld
 
-__all__ = ["load_scene", "SimWorld"]
+__all__ = ["load_scene", "SimWorld", "describe_world"]

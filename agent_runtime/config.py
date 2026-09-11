@@ -86,6 +86,11 @@ def robot_mcp_config(tool_log_path: Path, world_state_path: Path, scene: str | N
         env["ROBOT_SIM"] = "1"
         if sim_scene:
             env["ROBOT_SIM_SCENE"] = sim_scene
+        # Where the server mirrors the live ground-truth world. Passed through so a caller can
+        # give each run its own file — the evaluation harness needs one per episode, both to
+        # read the final world state and so episodes can't read each other's.
+        if os.environ.get("SIM_STATE_PATH"):
+            env["SIM_STATE_PATH"] = os.environ["SIM_STATE_PATH"]
     elif misty_ip:
         env["MISTY_IP"] = misty_ip              # REAL robot
     else:
