@@ -52,9 +52,37 @@ def load_env() -> None:
         os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
 
 
+class ClaudeCodeMissing(RuntimeError):
+    """The Claude Code CLI isn't installed. Raised BEFORE the SDK starts, so the message can
+    say what to install — the SDK's own `CLINotFoundError` surfaces later and mid-run."""
+
+
+# Where npm puts the binary when it isn't on PATH: Homebrew on Apple Silicon, Homebrew/npm on
+# Intel and Linux, and a user-level npm prefix.
+_CLI_FALLBACKS = ("/opt/homebrew/bin/claude", "/usr/local/bin/claude",
+                  "~/.npm-global/bin/claude", "~/.local/bin/claude")
+
+
 def find_cli() -> str:
-    """Absolute path to the Claude Code CLI the SDK shells out to (arm64 build)."""
-    return shutil.which("claude") or "/opt/homebrew/bin/claude"
+    """Absolute path to the Claude Code CLI the Agent SDK shells out to.
+
+    The SDK is a Python wrapper around that binary, not a replacement for it: `pip install
+    claude-agent-sdk` does NOT provide it, and without it every entry point fails with
+    "Claude Code not found"."""
+    cli = shutil.which("claude")
+    if cli:
+        return cli
+    for candidate in _CLI_FALLBACKS:
+        path = Path(candidate).expanduser()
+        if path.exists():
+            return str(path)
+    raise ClaudeCodeMissing(
+        "The Claude Code CLI ('claude') was not found, and the Agent SDK needs it — it runs "
+        "the agents by shelling out to that binary.\n"
+        "  - Install it (needs Node 18+):  npm install -g @anthropic-ai/claude-code\n"
+        "  - Then check it is on PATH:     claude --version\n"
+        f"  - Looked on PATH and at: {', '.join(_CLI_FALLBACKS)}\n"
+        "`pip install claude-agent-sdk` installs only the Python wrapper, not the CLI.")
 
 
 def read_steering(name: str) -> str:

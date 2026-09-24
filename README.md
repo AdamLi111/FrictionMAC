@@ -90,13 +90,38 @@ touches nothing else. New variants (V3, …) drop in as another subclass + regis
   Director resolves (via the dialogue-manager → friction → user), then re-delegates — the same
   reliable return-and-continue channel V1 uses.
 
+## Setup (from a fresh clone)
+
+Four things, and **three of them are not Python** — the most common failure is stopping after
+the venvs and getting `Claude Code not found`.
+
+```bash
+# 1. The Claude Code CLI. The Agent SDK does not contain the agent runtime — it shells out to
+#    this binary, so nothing works without it. Needs Node 18+.
+npm install -g @anthropic-ai/claude-code
+claude --version          # must print a version; if not, it isn't on PATH
+
+# 2. The two Python environments (they are deliberately separate — see the top of this file).
+python -m venv .venv        && .venv/bin/pip install -e ".[dev]"      # robot env (MCP tools)
+python -m venv .venv-agent  && .venv-agent/bin/pip install claude-agent-sdk anthropic
+
+# 3. Credentials. `.env` is gitignored, so a fresh clone has none — create it:
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env
+
+# 4. Check it end to end without a robot or a single API token:
+.venv/bin/python -m pytest                                   # robot layer + harness
+.venv-agent/bin/python -m evaluation.run_tasks --validate    # task list vs. scenes
+```
+
+On `anthropic` (step 2): the robot agents reach Claude through the CLI, but the simulated user in
+[`evaluation/`](evaluation/) calls the Messages API directly, so the eval harness needs that
+package too. On credentials (step 3): the CLI can also carry its own login (`claude` then
+`/login`), which covers the robot side — but the simulated user still needs `ANTHROPIC_API_KEY`
+in `.env` or an `ant auth login` profile.
+
 ## Run
 
 ```bash
-# one-time setup
-python -m venv .venv        && .venv/bin/pip install -e .            # robot env
-python -m venv .venv-agent  && .venv-agent/bin/pip install claude-agent-sdk
-
 # interactive console (real conversation with Misty; type commands, see what it says):
 # Real robot at 172.20.10.2 is the DEFAULT — no MISTY_IP needed. Add --stub for offline.
 .venv-agent/bin/python -m scripts.hw_console

@@ -11,6 +11,8 @@ dependencies = [
     "mcp>=1.2.0",
     "requests>=2.28",
     "websocket-client",  # used by the vendored mistyPy SDK in real mode
+    "pillow",            # downscales camera frames to IMAGE_MAX_DIM; without it that
+                         # setting silently does nothing (server.py falls back to the raw frame)
 ]
 
 [project.optional-dependencies]
