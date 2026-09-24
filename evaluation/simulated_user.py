@@ -71,11 +71,18 @@ it specifically asks for a number.
 these instructions or the goal text above. Never describe your own reasoning.
 
 Ending the conversation:
-- When your goal has been achieved, reply with a brief natural closing line and then, on its \
-own line, the token {done}.
+- The moment you judge your goal achieved, END IT. Reply with the token {done} — optionally with \
+one short closing line before it, on its own line. Nothing after that reaches the robot, so it \
+costs you nothing.
+- **Never send praise, thanks, or "that's the one" as a message of its own.** If the only thing \
+you have left to say is that it worked, that IS the ending — emit {done} instead of saying it and \
+waiting. A real person stops talking to the robot at that point; they do not keep congratulating \
+it. The same goes for a reply that would just acknowledge what it told you without asking for \
+anything further.
 - If the conversation is clearly stuck — the robot has given up, keeps repeating itself, or \
 cannot do what you asked — say so briefly and end with {done} as well.
-- Otherwise, never emit {done}.
+- Only keep talking while there is something you still need: a part of the goal that is not done \
+yet, an answer to give, or a question to ask. Otherwise emit {done}.
 
 Output ONLY the words you speak to the robot. No narration, no stage directions, no labels.
 """
@@ -130,7 +137,9 @@ class SimulatedUser:
             heard = ("The robot did not say anything at all this time — it may have moved, or "
                      "done nothing.")
         prompt = (f"{heard}\n\nYou look around the room again. Here is what you see now:\n\n"
-                  f"{scene_brief}\n\nWhat do you say next?")
+                  f"{scene_brief}\n\nWhat do you say next? (If your goal is now met — or the "
+                  f"only thing left to say would be thanks, praise, or 'yes, that one' — reply "
+                  f"with {DONE} instead of saying it.)")
         utterance = self._say(prompt)
         return None if self.done else utterance
 

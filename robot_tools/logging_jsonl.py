@@ -30,13 +30,18 @@ class ToolLogger:
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self._lock = threading.Lock()
 
-    def log(self, name: str, args, result) -> dict:
+    def log(self, name: str, args, result, **extra) -> dict:
+        """One line per call. `extra` adds top-level fields recorded ALONGSIDE the call but
+        never returned to the agent — ground truth the evaluator needs (e.g. the robot's pose
+        at the moment of the call, so a belief written then can be checked against it)."""
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "name": name,
             "args": _json_safe(args),
             "result": _json_safe(result),
         }
+        for key, value in extra.items():
+            entry[key] = _json_safe(value)
         line = json.dumps(entry, ensure_ascii=False)
         with self._lock:
             with open(self.path, "a", encoding="utf-8") as f:

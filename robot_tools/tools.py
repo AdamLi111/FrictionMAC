@@ -17,6 +17,27 @@ import inspect
 from . import config, runtime
 
 
+def _sim_truth(tool_name: str) -> dict:
+    """Ground truth to record NEXT TO a call, for the evaluator — never returned to the agent.
+
+    In sim mode the world knows things the log otherwise loses: where the robot was standing
+    when the call happened (without which a belief like "10° to the left" cannot be checked
+    against reality), and, for a capture, which objects were actually in view (without which
+    "did it record what it saw?" is unanswerable). Empty outside sim mode."""
+    if not config.is_sim():
+        return {}
+    world = runtime.get_sim_world()
+    if world is None:
+        return {}
+    truth = {"pose": [round(world.robot_pos[0], 3), round(world.robot_pos[1], 3),
+                      round(world.heading, 1)]}
+    if tool_name == "capture_view":
+        truth["visible"] = [{"name": v["name"], "bearing": round(v["bearing"], 1),
+                             "distance": round(v["distance"], 2), "room": v["room"]}
+                            for v in world.visible_objects()]
+    return truth
+
+
 def _tool(redact=None):
     def deco(fn):
         sig = inspect.signature(fn)
@@ -38,7 +59,9 @@ def _tool(redact=None):
                 return result
 
             logged = redact(result) if redact else result
-            runtime.get_logger().log(fn.__name__, arg_dict, logged)
+            # `_sim_truth` runs AFTER the tool, so a movement's pose is where it ended up and a
+            # capture's `visible` is what the camera actually had.
+            runtime.get_logger().log(fn.__name__, arg_dict, logged, **_sim_truth(fn.__name__))
             return result
 
         return wrapper

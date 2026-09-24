@@ -74,6 +74,64 @@ def categories(tasks: list[Task]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+MIN_VISIBLE_FRACTION = 0.20   # below this, a target is effectively unfindable — see visibility()
+
+
+def visibility(task, *, step: float = 0.5, headings: int = 24) -> list[dict]:
+    """How FINDABLE each instance of the task's target is, before spending a run on it.
+
+    `validate()` only proves a target exists in the scene. That is not enough: an object can be
+    authored in a spot no robot can ever see it from — tucked in a corner behind a table, say,
+    since every `rect` occludes sight-lines and the camera cone is only ~45° wide. The task then
+    looks fine on paper and is unwinnable in practice: the robot honestly reports it cannot find
+    the thing while the (omniscient) simulated user keeps insisting it is right there.
+
+    So sweep the scene on a `step`-metre grid, keep the poses the robot could actually stand in,
+    and ask from how many of them the target falls in view at ANY heading. Returns one entry per
+    object with the target's name (ambiguity tasks deliberately have several)."""
+    from robot_tools.sim import load_scene
+    from robot_tools.sim import geometry as geo
+
+    if not task.target:
+        return []
+    world = load_scene(task.scene)
+    targets = [o for o in world.objects if o.name == task.target]
+    xs = [p[0] for o in world.objects for p in o.samples()]
+    ys = [p[1] for o in world.objects for p in o.samples()]
+    grid = [(x, y)
+            for x in _frange(min(xs), max(xs), step)
+            for y in _frange(min(ys), max(ys), step)]
+    standable = [p for p in grid
+                 if all(geo.shape_clearance(o.shape, p) >= world.robot_radius
+                        for o in world.objects)]
+
+    out = []
+    for target in targets:
+        seen_from, nearest = [], None
+        for p in standable:
+            for i in range(headings):
+                world.robot_pos, world.heading = [p[0], p[1]], i * 360.0 / headings
+                if world._visible_samples(target):
+                    seen_from.append(p)
+                    break
+        centre = target.centroid()
+        if seen_from:
+            nearest = min(seen_from,
+                          key=lambda p: (p[0] - centre[0]) ** 2 + (p[1] - centre[1]) ** 2)
+        out.append({
+            "target": target.name, "room": target.room, "position": centre,
+            "standable_poses": len(standable), "visible_poses": len(seen_from),
+            "fraction": (len(seen_from) / len(standable)) if standable else 0.0,
+            "nearest_viewpoint": nearest,
+        })
+    return out
+
+
+def _frange(lo: float, hi: float, step: float):
+    n = int((hi - lo) / step) + 1
+    return [lo + i * step for i in range(max(1, n))]
+
+
 def validate(tasks: list[Task]) -> list[str]:
     """Cross-check the task list against the scenes it references: unique ids, loadable scene,
     and a `target` that actually names an object in that scene. Returns a list of problems

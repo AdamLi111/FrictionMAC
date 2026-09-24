@@ -199,12 +199,55 @@ perception report, multi-step, absent object, expression, obstacle avoidance) an
 loads and every `target` really exists in it.
 
 Each episode is **isolated** — its own scene, belief store, tool log and live sim-state file, so
-nothing leaks between tasks — and writes to `data/eval_<arch>_<ts>/`: `run.json` (the whole run,
-rewritten after every episode so a long run is inspectable while it goes), plus per episode
-`<task_id>_story.txt` (**the readable one** — see below), the dialogue and end reason
-(`<task_id>.json`), the flat Director-side transcript (`.log`), every tool call
-(`_tools.jsonl`) and the ground-truth world as the episode left it (`_sim.json` — final pose,
-collisions, action history: the hook a scorer would read).
+nothing leaks between tasks — and writes to `data/eval_<arch>_<ts>/`: `summary.txt` (the run
+rollup), `run.json` (the whole run, rewritten after every episode so a long run is inspectable
+while it goes), plus per episode `<task_id>_story.txt` (**the readable one** — see below), the
+dialogue, end reason and score (`<task_id>.json`), the flat Director-side transcript (`.log`),
+every tool call (`_tools.jsonl`) and the ground-truth world as the episode left it (`_sim.json`).
+
+### Scoring: outcome and world-model accuracy
+
+Every run ends with a summary (also written to `summary.txt`, and recomputable for any finished
+run with `--summarize <run_dir>` — no tokens, everything needed is on disk):
+
+```
+  user-judged success      7/9  (78%)   ← the simulated user's own verdict
+  reached target (truth)   5/8  (63%)   ← ground-truth pose, tasks with a target only
+  episodes with no speech  1
+  mean duration            148.2s per episode
+  mean user turns          3.4
+  how episodes ended:        7 user_ended   1 turn_timeout   1 max_user_turns
+  world model (the agents' own beliefs vs. ground truth):
+      entries recorded     14   (referring to nothing real: 1; made-up names: 2)
+      room correct         86%
+      direction correct    71%   (mean error 18.4°)
+      recall of what it saw 64%
+```
+
+Outcome is three signals kept deliberately separate rather than collapsed into one number —
+`user_judged_success` (the user held the goal and decided; the headline), `reached_target`
+(ground truth: the robot's final pose is within 0.75 m of the target's surface, or it collided
+with it, which in this sim means arrived), and `end_reason` (which separates giving up from
+running out of turns from a harness failure).
+
+**World-model accuracy** checks the agents' own beliefs — the free-form dicts `update_world`
+writes, e.g. `"red cup": {"room": "office", "direction_last_seen": "10° left-front"}` — against
+what the sim knows:
+
+- *grounding* — does the recorded name refer to a real object, or to nothing (`teapot`)? And is
+  the name one the scene actually uses, or the agent's invention for a real thing (`far_chair`)?
+- *room* — does the claimed room match? (With two identically-named objects, matching either
+  counts; the belief store has no way to say which instance it means.)
+- *direction* — a bearing is only meaningful relative to where the robot stood when it was
+  written, so the tool layer records the **pose alongside every call** in sim mode, and
+  `"10° to the left"` is scored against the true bearing from that pose (±35° tolerance).
+- *recall* — of the objects the camera actually showed (also recorded per `capture_view`), how
+  many reached the world model at all.
+
+Both of those are **log-only**: the pose and visible-object list are written beside the call and
+never returned to the agent, so instrumenting this changed nothing the robot can perceive.
+Anything the evidence can't settle scores `unknown`/`unscorable` rather than wrong — a belief
+with no direction is not a wrong direction. Details in [`score.py`](evaluation/score.py).
 
 ### Reading what the agents were thinking
 

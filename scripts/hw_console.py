@@ -113,7 +113,7 @@ async def run():
     # The console's only user-visible output: what Misty says.
     engine = sess_mod.TurnEngine(logs.emit,
                                  lambda text, friction: print(f"Misty: {text}"),
-                                 trace=story.event)
+                                 trace=story.event, speech_log=tool_log)
 
     turns = 0                  # counted out here so the session footer can see it
     try:

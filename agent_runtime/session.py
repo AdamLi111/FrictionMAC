@@ -28,8 +28,10 @@ Attribution: `AssistantMessage.parent_tool_use_id` is `None` for the Director an
 `id` of the `Agent` tool call that spawned the subagent, so recording the ids of the Director's
 `Agent` calls names every later thought, tool call and report. See `narrative.py`.
 """
+import json
 import math
 import time
+from collections import Counter
 from contextlib import asynccontextmanager
 
 import anyio
@@ -50,6 +52,13 @@ QUIET_S = 2.0   # after the Director finishes, wait this long of silence to drai
 # giving up (a completion with no follow-up shouldn't hang). Does NOT apply while the Director
 # is still mid-turn — there we wait for the real ResultMessage (bounded by max_collect_s).
 CONTINUATION_GRACE_S = 20.0
+# A turn that has produced NO speech is not obviously finished. The top-level stream only shows
+# one level of delegation, so work running deeper (a V2 manager's expert, say) is invisible here
+# and `pending` looks empty — end the turn at the first 2s lull and you cut a cascade that was
+# still running, then report "(no spoken reply)" for a command the robot was about to answer.
+# So when nothing has been said yet, require this much genuine quiet — no messages AND no robot
+# tool calls — before calling the turn silent.
+SILENT_GRACE_S = 20.0
 
 
 def stamp_command(cmd: str, last_reply_at: float | None) -> str:
@@ -63,6 +72,58 @@ def stamp_command(cmd: str, last_reply_at: float | None) -> str:
     else:
         gap = f"{time.monotonic() - last_reply_at:.0f}s since your last reply"
     return f"[clock {now} | {gap}]\n\n{cmd}"
+
+
+class SpeechTail:
+    """Speech as the ROBOT recorded it, not as the message stream happened to surface it.
+
+    Detecting speech from `speak` tool-use blocks in the SDK stream only works while the speaker
+    is a DIRECT child of the top-level agent. It is not in V2: there the speaker is a grandchild
+    (Director → dialogue-manager → regular-utterance), and a grandchild's tool calls never reach
+    the top-level stream — so the robot talks, the harness hears nothing, and (in an evaluation
+    run) the simulated user is told the robot was silent and starts asking "can you hear me?"
+    while Misty is in fact answering.
+
+    The MCP server's tool log is the authoritative record: one line per call, opened/written/
+    closed under a lock, from the server process, at any nesting depth. This tails it."""
+
+    def __init__(self, path):
+        self.path = str(path)
+        self._offset = 0
+        #: when the robot last did ANYTHING (any tool call) — liveness the SDK stream can't show
+        self.last_activity: float | None = None
+
+    def drain(self) -> list[dict]:
+        """Every `speak` logged since the last call, in order. Also notes any other tool call,
+        as evidence that work is still in flight (see `last_activity`)."""
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                f.seek(self._offset)
+                chunk = f.read()
+        except FileNotFoundError:
+            return []
+        # Only consume whole lines — the server may be mid-write on the last one.
+        cut = chunk.rfind("\n")
+        if cut < 0:
+            return []
+        self._offset += len(chunk[:cut + 1].encode("utf-8"))
+        self.last_activity = time.monotonic()      # the robot did something just now
+
+        out = []
+        for line in chunk[:cut].splitlines():
+            line = line.strip()
+            if not line or '"speak"' not in line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get("name") != "speak":
+                continue
+            args = entry.get("args") or {}
+            out.append({"text": args.get("text", ""),
+                        "friction_type": args.get("friction_type", "")})
+        return out
 
 
 def _terminal_status(msg):
@@ -130,11 +191,15 @@ class TurnEngine:
     a terminal status) lives on the instance, which is what makes cross-turn dedup possible —
     so create ONE engine per session, not one per turn."""
 
-    def __init__(self, emit, on_speech, *, trace=None, max_collect_s: float | None = None,
-                 quiet_s: float = QUIET_S):
+    def __init__(self, emit, on_speech, *, trace=None, speech_log=None,
+                 max_collect_s: float | None = None, quiet_s: float = QUIET_S):
         self.emit = emit
         self.on_speech = on_speech
         self.trace = trace or (lambda event: None)
+        # Where speech is counted from. With a tool log, THAT is the source of truth (it sees
+        # every speaker at any delegation depth — see SpeechTail); the stream then only feeds
+        # the readable narrative. Without one, the stream is all there is.
+        self.speech = SpeechTail(speech_log) if speech_log else None
         # tool_use_id of an `Agent` call -> the subagent it spawned. This is what turns
         # `parent_tool_use_id` on a later message into an agent NAME.
         self.agent_of: dict[str, str] = {}
@@ -185,13 +250,12 @@ class TurnEngine:
                     elif name == SPEAK:
                         text = inp.get("text", "")
                         friction = inp.get("friction_type", "")
-                        self.emit("INFO", f"Misty: {text}")
                         self.emit("DEBUG", f"[speak/{friction}] {text}")
-                        turn["speech"].append({"text": text, "friction_type": friction})
-                        turn["spoke"] = True
-                        self.on_speech(text, friction)
                         self.trace({"kind": "speak", "agent": who, "text": text,
                                     "friction_type": friction})
+                        turn["rendered"][text] += 1      # so the tail doesn't re-render it
+                        if self.speech is None:
+                            self._heard(turn, text, friction)
                     else:
                         self.emit("DEBUG", f"[tool:{who}] {name} input={inp}")
                         self.trace({"kind": "tool", "agent": who, "name": name, "input": inp})
@@ -262,7 +326,31 @@ class TurnEngine:
     def _new_turn():
         return {"pending": set(), "result_seen": False, "spoke": False,
                 "awaiting_continuation": False, "last_done": None, "speech": [],
-                "timed_out": False, "subtype": None}
+                "timed_out": False, "subtype": None,
+                # texts already shown in the narrative from the stream, so a tail-sourced
+                # duplicate of the same utterance isn't rendered twice
+                "rendered": Counter(),
+                #: when a message last arrived — half of the silence test (see SILENT_GRACE_S)
+                "last_message": time.monotonic()}
+
+    def _heard(self, turn, text: str, friction: str):
+        """Record one utterance as delivered to the user."""
+        self.emit("INFO", f"Misty: {text}")
+        turn["speech"].append({"text": text, "friction_type": friction})
+        turn["spoke"] = True
+        self.on_speech(text, friction)
+
+    def _drain_speech(self, turn):
+        """Pull any speech the robot logged but the stream didn't surface."""
+        if self.speech is None:
+            return
+        for said in self.speech.drain():
+            if turn["rendered"][said["text"]] > 0:
+                turn["rendered"][said["text"]] -= 1      # already in the narrative
+            else:
+                self.trace({"kind": "speak", "agent": "dialogue", "text": said["text"],
+                            "friction_type": said["friction_type"]})
+            self._heard(turn, said["text"], said["friction_type"])
 
     def drain_now(self, recv):
         """Consume everything currently buffered (stragglers / an inter-turn
@@ -300,7 +388,11 @@ class TurnEngine:
                 except anyio.EndOfStream:
                     break
             if not scope.cancelled_caught:
+                turn["last_message"] = time.monotonic()
                 self.process(msg, turn)
+            # Speech can come from a depth the stream never surfaces, so check the robot's own
+            # record before every decision about whether this turn is finished.
+            self._drain_speech(turn)
             # Once the Director's turn has ended AND the robot has delivered its spoken reply,
             # the command is complete — hand control straight back even if a fire-and-forget
             # background task (e.g. a world-model recording) is still running; it keeps going
@@ -312,7 +404,17 @@ class TurnEngine:
                 if turn["pending"]:
                     continue                              # a task is still working
                 if turn["result_seen"]:
-                    break                                 # turn ended, nothing pending → done
+                    if turn["spoke"]:
+                        break                             # answered and idle → done
+                    # Nothing said yet. Deeper delegations don't register as `pending`, so hold
+                    # the turn open until the robot has been genuinely quiet — no new messages
+                    # and no tool calls — for SILENT_GRACE_S. Only then is it really silent.
+                    idle_for = time.monotonic() - max(
+                        turn["last_message"],
+                        (self.speech.last_activity if self.speech else 0) or 0)
+                    if idle_for > SILENT_GRACE_S:
+                        break
+                    continue
                 if turn["awaiting_continuation"]:
                     # Case A (fragmented): the Director ended a turn and a background
                     # completion is expected to trigger a follow-up. Wait for it, but bound the
@@ -326,4 +428,5 @@ class TurnEngine:
                 # Keep waiting for its real ResultMessage; do NOT end on a timer (that
                 # truncated the turn before).
                 continue
+        self._drain_speech(turn)          # anything logged during the final quiet window
         return turn

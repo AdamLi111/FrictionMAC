@@ -52,7 +52,7 @@ import anyio
 
 from agent_runtime import (architectures, config, main as agent_main, narrative,
                            session as sess_mod)
-from evaluation import tasks as task_mod
+from evaluation import score, tasks as task_mod
 from evaluation.simulated_user import SimulatedUser, SimulatedUserError
 
 DEFAULT_TURN_TIMEOUT_S = 300.0   # per user turn; a safety ceiling for unattended runs
@@ -144,7 +144,8 @@ async def run_episode(task, arch, out_dir, *, level="DEBUG", turn_timeout=DEFAUL
     })
 
     engine = sess_mod.TurnEngine(logs.emit, lambda text, friction: None,
-                                 trace=story.event, max_collect_s=turn_timeout)
+                                 trace=story.event, speech_log=paths["tools"],
+                                 max_collect_s=turn_timeout)
     options = agent_main.build_options(paths["tools"], paths["beliefs"], None, arch=arch)
     options.stderr = lambda line: logs.emit("FULL", f"[stderr] {line.rstrip()}")
 
@@ -205,6 +206,8 @@ async def run_episode(task, arch, out_dir, *, level="DEBUG", turn_timeout=DEFAUL
     record["final_world"] = final_world(paths["sim_state"], task.scene)
     record["collisions"] = [c["object"] for c in record["final_world"].get("collisions", [])]
     record["robot_actions"] = record["final_world"].get("action_history", [])
+    record["score"] = score.score_episode(record, task, beliefs_path=paths["beliefs"],
+                                          tools_path=paths["tools"])
     logs.emit("INFO", f"[episode end] reason={record['end_reason']} "
                       f"turns={record['user_turns']} duration={record['duration_s']}s")
     logs.close()
@@ -250,7 +253,7 @@ async def run(args) -> dict:
         "task_list": os.path.relpath(args.task_list or task_mod.TASK_LIST_PATH, config.REPO),
         "user_model": os.environ.get("SIM_USER_MODEL", "claude-haiku-4-5"),
         "repeats": args.repeats, "turn_timeout_s": args.turn_timeout,
-        "log_level": args.log_level, "episodes": [],
+        "log_level": args.log_level, "episodes": [], "summary": {},
     }
     for i, task in enumerate(selected, 1):
         for r in range(1, args.repeats + 1):
@@ -260,19 +263,53 @@ async def run(args) -> dict:
             ep = await run_episode(task, arch, str(out_dir), level=args.log_level,
                                    turn_timeout=args.turn_timeout, label=label)
             run_record["episodes"].append(ep)
-            print(f"    → {ep['end_reason']} in {ep['user_turns']} user turn(s), "
-                  f"{ep['duration_s']}s"
-                  + (f", collisions: {', '.join(ep['collisions'])}" if ep["collisions"] else ""))
+            s = ep.get("score") or {}
+            verdict = "✓ success" if s.get("user_judged_success") else "✗ not achieved"
+            reached = ("" if s.get("reached_target") is None
+                       else f", target {'reached' if s['reached_target'] else 'NOT reached'}")
+            print(f"    → {verdict} ({ep['end_reason']}) in {ep['user_turns']} user turn(s), "
+                  f"{ep['duration_s']}s{reached}"
+                  + (f", {len(ep['collisions'])} collision(s)" if ep["collisions"] else ""))
             print()
-            with open(out_dir / "run.json", "w") as f:      # rewritten after each episode
+            # run.json and the summary are rewritten after every episode, so a long run can be
+            # read (and a crashed one salvaged) without waiting for the end.
+            run_record["summary"] = score.summarise(run_record["episodes"])
+            with open(out_dir / "run.json", "w") as f:
                 json.dump(run_record, f, indent=2)
+            with open(out_dir / "summary.txt", "w") as f:
+                f.write(score.format_summary(run_record["summary"], arch=arch.name) + "\n")
 
-    reasons: dict[str, int] = {}
+    print(score.format_summary(run_record["summary"], arch=arch.name))
+    print(f"\n   {out_dir}/run.json   (summary also in summary.txt)")
+    return run_record
+
+
+def summarise_existing(run_dir: str, task_list=None) -> dict:
+    """Re-score a finished run directory and rewrite its summary.
+
+    Useful for runs made before scoring existed, and for re-scoring after a threshold changes —
+    everything the scorer needs is already on disk (`run.json` plus each episode's belief store
+    and tool log), so nothing has to be re-run."""
+    with open(os.path.join(run_dir, "run.json")) as f:
+        run_record = json.load(f)
+    by_id = {t.task_id: t for t in task_mod.load_tasks(task_list)}
     for ep in run_record["episodes"]:
-        reasons[ep["end_reason"]] = reasons.get(ep["end_reason"], 0) + 1
-    print("── run complete ──")
-    print(f"   episodes: {len(run_record['episodes'])}  |  end reasons: {reasons}")
-    print(f"   {out_dir}/run.json")
+        task = by_id.get(ep["task_id"])
+        if task is None:                      # task since renamed/removed from the list
+            continue
+        paths = ep.get("paths") or {}
+        ep["score"] = score.score_episode(
+            ep, task,
+            beliefs_path=os.path.join(config.REPO, paths.get("beliefs", "")),
+            tools_path=os.path.join(config.REPO, paths.get("tools", "")))
+    run_record["summary"] = score.summarise(run_record["episodes"])
+    with open(os.path.join(run_dir, "run.json"), "w") as f:
+        json.dump(run_record, f, indent=2)
+    text = score.format_summary(run_record["summary"], arch=run_record.get("arch", ""),
+                                title=f"RUN SUMMARY — {os.path.basename(run_dir)}")
+    with open(os.path.join(run_dir, "summary.txt"), "w") as f:
+        f.write(text + "\n")
+    print(text)
     return run_record
 
 
@@ -294,10 +331,20 @@ def main():
     p.add_argument("--log-level", default=os.environ.get("LOG_LEVEL", "DEBUG").upper(),
                    choices=sorted(_LEVEL), help="Director-side transcript verbosity")
     p.add_argument("--task-list", default=None, help="path to an alternative task_list.json")
+    p.add_argument("--summarize", metavar="RUN_DIR", default=None,
+                   help="re-score a finished run directory and rewrite its summary, then exit "
+                        "(no tokens spent — everything needed is already on disk)")
     p.add_argument("--list", action="store_true", help="print the task list and exit")
     p.add_argument("--validate", action="store_true",
                    help="check the task list against the scenes it references, then exit")
+    p.add_argument("--check-visibility", action="store_true",
+                   help="with --validate: also report how findable each target is (catches "
+                        "objects authored where the robot can never see them)")
     args = p.parse_args()
+
+    if args.summarize:
+        summarise_existing(args.summarize, args.task_list)
+        return
 
     all_tasks = task_mod.load_tasks(args.task_list)
     if args.list:
@@ -310,6 +357,23 @@ def main():
         for msg in problems:
             print(f"  ✗ {msg}")
         print(f"{len(all_tasks)} tasks, {len(problems)} problem(s).")
+        if args.check_visibility:
+            print("\nTarget findability — from how many standable poses the target can be seen\n"
+                  "at some heading. A low number means the object is authored somewhere the\n"
+                  "robot can never see it, and the task is unwinnable however well it behaves.")
+            hard = 0
+            for t in all_tasks:
+                for v in task_mod.visibility(t):
+                    frac = v["fraction"]
+                    flag = "  ✗" if frac < task_mod.MIN_VISIBLE_FRACTION else "  ·"
+                    if frac < task_mod.MIN_VISIBLE_FRACTION:
+                        hard += 1
+                    where = f"{v['position'][0]:.1f},{v['position'][1]:.1f}"
+                    print(f"{flag} {t.task_id:<12} {v['target']:<16} ({v['room'] or '-'}"
+                          f" @ {where})  {v['visible_poses']:>3}/{v['standable_poses']:<3} "
+                          f"= {frac * 100:>3.0f}%")
+            print(f"\n{hard} target(s) below {task_mod.MIN_VISIBLE_FRACTION:.0%} — "
+                  f"reposition the object in the scene, or retarget the task.")
         sys.exit(1 if problems else 0)
 
     anyio.run(lambda: run(args))

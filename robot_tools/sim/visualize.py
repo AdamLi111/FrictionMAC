@@ -9,11 +9,17 @@ the start pose. No dependencies — it emits SVG text directly.
 
     python -m robot_tools.sim.visualize office_kitchen            # -> data/scene_office_kitchen.svg
     python -m robot_tools.sim.visualize path/to/scene.json out.svg
-    python -m robot_tools.sim.visualize --live                    # the RUNNING session's live pose
+    python -m robot_tools.sim.visualize --live                    # the RUNNING world's live pose
+    python -m robot_tools.sim.visualize --live --watch            # ...re-rendered every 2s
+
+`--live` means "whichever sim world is being written right now" — the single-session file, or
+the current episode of an evaluation run, whichever is freshest (see `live_state_path`). With
+`--watch` it keeps following, including across an eval run's episode boundaries.
 """
 import math
 import os
 import sys
+import time
 
 from .. import config
 from . import geometry as geo
@@ -182,30 +188,76 @@ def _esc(s):
     return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
 
 
+def _data_dir() -> str:
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "data")
+
+
+def live_state_path() -> str | None:
+    """The sim state file that is being written RIGHT NOW, or None if nothing is running.
+
+    An explicit `SIM_STATE_PATH` always wins. Otherwise pick the most recently modified
+    candidate: the default single-session file, plus every per-episode file an evaluation run
+    writes. The eval harness gives each episode its own state file (so episodes can't read each
+    other's) and sets `SIM_STATE_PATH` only inside its own process — so a `--live` in another
+    shell would otherwise render a stale default file instead of the episode in flight."""
+    if os.environ.get("SIM_STATE_PATH"):
+        return os.environ["SIM_STATE_PATH"]
+    import glob
+    candidates = [config.sim_state_path()]
+    candidates += glob.glob(os.path.join(_data_dir(), "eval_*", "*_sim.json"))
+    live = [p for p in candidates if os.path.isfile(p)]
+    return max(live, key=os.path.getmtime) if live else None
+
+
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
     if not argv:
-        print("usage: python -m robot_tools.sim.visualize <scene|path|--live> [out.svg]")
+        print("usage: python -m robot_tools.sim.visualize <scene|path|--live> [out.svg] "
+              "[--watch [seconds]]")
         return 2
-    if argv[0] == "--live":                       # render the running session's current pose
-        state = config.sim_state_path()
-        if not os.path.isfile(state):
-            print(f"no live sim state at {state} — is a sim session running?")
+
+    every = None                       # seconds between re-renders; None = render once
+    if "--watch" in argv:
+        i = argv.index("--watch")
+        rest = argv[i + 1:]
+        if rest and rest[0].replace(".", "", 1).isdigit():
+            every, rest = float(rest[0]), rest[1:]
+        else:
+            every = 2.0
+        argv = argv[:i] + rest
+
+    follow_live = argv[0] == "--live"
+    if follow_live:
+        state = live_state_path()
+        if state is None:
+            print("no live sim state found — is a sim session or an eval run going?")
             return 1
         argv = [state] + argv[1:]
-    world = load_scene(argv[0])
-    if len(argv) > 1:
-        out = argv[1]
-    else:
-        base = os.path.splitext(os.path.basename(argv[0]))[0]
-        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "data")
-        os.makedirs(data_dir, exist_ok=True)
-        out = os.path.join(data_dir, f"scene_{base}.svg")
-    with open(out, "w") as f:
-        f.write(render_svg(world))
-    print(out)
-    return 0
+
+    out = argv[1] if len(argv) > 1 else None
+    if out is None:
+        base = "live" if follow_live else os.path.splitext(os.path.basename(argv[0]))[0]
+        os.makedirs(_data_dir(), exist_ok=True)
+        out = os.path.join(_data_dir(), f"scene_{base}.svg")
+
+    while True:
+        # Re-resolve each pass: an eval run moves to the next episode's state file, and
+        # following the newest one means the view follows the run.
+        source = live_state_path() if follow_live else argv[0]
+        if source is None:
+            print("live sim state disappeared — stopping")
+            return 1
+        with open(out, "w") as f:
+            f.write(render_svg(load_scene(source)))
+        print(f"{out}  ←  {os.path.relpath(source, _data_dir())}"
+              + (f"   (refreshing every {every:g}s; Ctrl-C to stop)" if every else ""))
+        if not every:
+            return 0
+        try:
+            time.sleep(every)
+        except KeyboardInterrupt:
+            return 0
 
 
 if __name__ == "__main__":
