@@ -33,7 +33,31 @@ def belief_store_path() -> Path:
 DEFAULT_MISTY_IP = "172.20.10.2"
 
 # The robot tool layer's interpreter (has mcp + requests + robot_tools on PYTHONPATH).
-ROBOT_PYTHON = REPO / ".venv" / "bin" / "python"
+def robot_python() -> Path:
+    """The robot env's interpreter, which the MCP server runs as a subprocess.
+
+    Venv layout is platform-specific — `bin/python` on macOS/Linux, `Scripts\\python.exe` on
+    Windows — and getting it wrong fails a long way from the cause: the server never starts, so
+    no `mcp__robot__*` tool is ever registered, so every expert's tool list resolves to nothing
+    and the CLI refuses to spawn them with "unrecognized [mcp__robot__speak]"."""
+    venv = REPO / ".venv"
+    candidates = ([venv / "Scripts" / "python.exe", venv / "Scripts" / "python"]
+                  if os.name == "nt" else
+                  [venv / "bin" / "python", venv / "bin" / "python3"])
+    for path in candidates:
+        if path.exists():
+            return path
+    raise RobotEnvMissing(
+        f"The robot environment is not installed — no interpreter at "
+        f"{', '.join(str(c) for c in candidates)}.\n"
+        f"  - macOS/Linux:  python -m venv .venv && .venv/bin/pip install -e \".[dev]\"\n"
+        f"  - Windows:      python -m venv .venv && .venv\\Scripts\\pip install -e \".[dev]\"\n"
+        f"This env runs the robot MCP server; without it the agents have no robot tools at all.")
+
+
+class RobotEnvMissing(RuntimeError):
+    """The .venv robot environment is absent. Raised before the agents start, because the
+    downstream symptom ("unrecognized [mcp__robot__speak]") points nowhere near the cause."""
 
 # MCP server name -> tools are namespaced mcp__robot__<tool>. Letters only = simple matching.
 ROBOT_SERVER = "robot"
@@ -129,7 +153,7 @@ def robot_mcp_config(tool_log_path: Path, world_state_path: Path, scene: str | N
             env["ROBOT_STUB_SLOW"] = "1"         # honor sleeps in stub (make tools slow)
     return {
         "type": "stdio",
-        "command": str(ROBOT_PYTHON),
+        "command": str(robot_python()),
         "args": ["-m", "robot_tools.server"],
         "env": env,
     }

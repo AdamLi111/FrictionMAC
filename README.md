@@ -113,6 +113,38 @@ echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env
 .venv-agent/bin/python -m evaluation.run_tasks --validate    # task list vs. scenes
 ```
 
+<details>
+<summary><b>Windows (PowerShell / cmd)</b> — venvs put the interpreter somewhere else</summary>
+
+Every `.venv/bin/<x>` below becomes `.venv\Scripts\<x>`; that is the whole difference, but it
+bites twice — once when installing, and again invisibly, because the agent runtime launches the
+robot MCP server using the robot env's interpreter. Steps 2 and 4 become:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\pip install -e ".[dev]"
+python -m venv .venv-agent
+.venv-agent\Scripts\pip install claude-agent-sdk anthropic
+
+.venv\Scripts\python -m pytest
+.venv-agent\Scripts\python -m evaluation.run_tasks --validate
+```
+
+Then substitute the same way in every command in this README (`.venv-agent\Scripts\python -m
+scripts.hw_console`). For `.env`, use an editor — `echo ... > .env` in PowerShell writes UTF-16,
+which the loader cannot read.
+</details>
+
+**If the agents run but every expert fails with `unrecognized [mcp__robot__speak]`**, the robot
+MCP server did not start, so no `mcp__robot__*` tool got registered and the CLI refuses to spawn
+an expert with an empty tool list. It is almost always step 2: the robot env is missing, or was
+installed somewhere the agent side doesn't look. Check it directly — this should start and sit
+waiting (Ctrl-C to quit) rather than exit with a traceback:
+
+```bash
+.venv/bin/python -m robot_tools.server         # Windows: .venv\Scripts\python -m robot_tools.server
+```
+
 On `anthropic` (step 2): the robot agents reach Claude through the CLI, but the simulated user in
 [`evaluation/`](evaluation/) calls the Messages API directly, so the eval harness needs that
 package too. On credentials (step 3): the CLI can also carry its own login (`claude` then
