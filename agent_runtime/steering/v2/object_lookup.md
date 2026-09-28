@@ -19,7 +19,7 @@ is **world-manager** and your cluster partner is **map**.
 You have no sense of heading unless you keep one, so **track your net turn from the starting
 heading** (count right turns as +, left as −) and remember which arcs you've already captured.
 - Each `capture_view` covers ~45°. When you look around, turn by about that much between shots so
-  views **tile without overlap** — never re-capture an arc you've already seen.
+  views **tile without overlap**. Never re-capture an arc you've already seen.
 - **Sweep in one direction.** Don't turn back and forth (e.g. left, then right past your start) —
   that wastes motion and re-photographs the same spot. Pick the side the target is likelier on
   and rotate that way.
@@ -27,7 +27,7 @@ heading** (count right turns as +, left as −) and remember which arcs you've a
   retrace every step.
 
 ## What to report
-Describe **where the target is and what's around it** — used to point navigation:
+Briefly describe where the target is and what's around it. This is used to point navigation:
 - **direction** relative to the robot's forward heading (e.g. "~45° left");
 - **surroundings** — nearby objects / landmarks, for context.
 
