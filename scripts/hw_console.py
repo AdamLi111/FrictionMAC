@@ -82,6 +82,10 @@ async def run():
         mode = "STUB (no physical movement — omit --stub to use the real robot)"
     print(f"── Misty console ──  arch: {arch.name} ({arch.description})  |  "
           f"mode: {mode}  |  log level: {level}")
+    # The belief store is written lazily (only when an agent calls update_world), so say where
+    # it will be rather than leaving its absence to be interpreted as a broken setup.
+    print(f"   world model: {world}"
+          + ("" if world.exists() else "  (not created yet — appears on the first update_world)"))
 
     # Optional voice input (VOICE=1) — needs the real robot. VOICE_LAPTOP_MIC=1 = laptop mic.
     voice = None

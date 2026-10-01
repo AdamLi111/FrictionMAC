@@ -203,3 +203,32 @@ def test_user_is_told_when_the_robot_said_nothing():
 def test_user_utterances_are_stripped_of_labels_and_quotes():
     _, user = _user(['You: "Go look at the cup."'])
     assert user.opening_utterance() == "Go look at the cup."
+
+
+# ------------------------------------------------------- failure reporting (run_tasks)
+def test_exception_groups_are_unwrapped_to_the_real_cause():
+    """A failure inside the session's task group arrives as an ExceptionGroup whose str() is
+    "unhandled errors in a TaskGroup (1 sub-exception)" — useless in a run record. The runner
+    must report the leaf exceptions instead."""
+    run_tasks = pytest.importorskip("evaluation.run_tasks")
+    inner = ValueError("no space left on device")
+    group = BaseExceptionGroup("unhandled errors in a TaskGroup", [inner])
+    assert run_tasks.leaf_exceptions(group) == [inner]
+
+    nested = BaseExceptionGroup("outer", [BaseExceptionGroup("inner", [inner])])
+    assert run_tasks.leaf_exceptions(nested) == [inner]
+    assert run_tasks.leaf_exceptions(inner) == [inner]          # a plain exception passes through
+
+
+def test_billing_and_auth_failures_are_classified_as_unrecoverable():
+    """An exhausted credit balance fails every episode identically, so it must be
+    distinguishable from a transient API error and stop the batch."""
+    sim_user = _sim_user_module()
+    assert sim_user._fatal(400, "Your credit balance is too low to access the Anthropic API")
+    assert sim_user._fatal(401, "invalid x-api-key")
+    assert sim_user._fatal(403, "permission denied")
+    # ordinary failures stay retryable/per-episode
+    assert not sim_user._fatal(400, "messages: at least one message is required")
+    assert not sim_user._fatal(429, "rate limited")
+    assert not sim_user._fatal(529, "overloaded")
+    assert issubclass(sim_user.SimulatedUserUnavailable, sim_user.SimulatedUserError)

@@ -52,8 +52,9 @@ import anyio
 
 from agent_runtime import (architectures, config, main as agent_main, narrative,
                            session as sess_mod)
-from evaluation import score, tasks as task_mod
-from evaluation.simulated_user import SimulatedUser, SimulatedUserError
+from evaluation import score, simulated_user, tasks as task_mod
+from evaluation.simulated_user import (SimulatedUser, SimulatedUserError,
+                                       SimulatedUserUnavailable)
 
 DEFAULT_TURN_TIMEOUT_S = 300.0   # per user turn; a safety ceiling for unattended runs
 _LEVEL = {"INFO": 0, "DEBUG": 1, "FULL": 2}
@@ -73,6 +74,13 @@ class EpisodeLog:
 
     def close(self):
         self.f.close()
+
+
+def leaf_exceptions(exc: BaseException) -> list[BaseException]:
+    """Flatten nested ExceptionGroups to the exceptions that actually went wrong."""
+    if isinstance(exc, BaseExceptionGroup):
+        return [leaf for sub in exc.exceptions for leaf in leaf_exceptions(sub)]
+    return [exc]
 
 
 def scene_brief(scene: str, state_path: str) -> str:
@@ -193,12 +201,24 @@ async def run_episode(task, arch, out_dir, *, level="DEBUG", turn_timeout=DEFAUL
 
                 utterance = await anyio.to_thread.run_sync(
                     user.reply, speech, scene_brief(task.scene, paths["sim_state"]))
-    except SimulatedUserError as e:
-        record["end_reason"], record["error"] = "user_error", str(e)
-        logs.emit("INFO", f"[abort] {e}")
     except Exception as e:                                  # keep the batch running
-        record["end_reason"], record["error"] = "harness_error", f"{type(e).__name__}: {e}"
-        logs.emit("INFO", f"[abort] {traceback.format_exc()}")
+        # The session runs inside a task group, so anything raised in it (or in a worker thread)
+        # arrives wrapped in an ExceptionGroup whose str() is the useless "unhandled errors in a
+        # TaskGroup (1 sub-exception)". Unwrap to the real causes before classifying or
+        # recording, or every failure looks like an anonymous harness bug.
+        leaves = leaf_exceptions(e)
+        user_error = next((x for x in leaves if isinstance(x, SimulatedUserError)), None)
+        if user_error is not None:
+            record["end_reason"], record["error"] = "user_error", str(user_error)
+        else:
+            record["end_reason"] = "harness_error"
+            record["error"] = "; ".join(f"{type(x).__name__}: {x}" for x in leaves)
+        logs.emit("INFO", f"[abort] {record['error']}")
+        logs.emit("DEBUG", traceback.format_exc())
+        if any(isinstance(x, SimulatedUserUnavailable) for x in leaves):
+            # Credentials/billing: every remaining episode would fail identically, so let the
+            # batch stop instead of burning robot sessions on it.
+            record["fatal"] = True
 
     record["duration_s"] = round(time.monotonic() - t0, 1)
     record["user_said_done"] = user.done
@@ -237,6 +257,16 @@ async def run(args) -> dict:
     if not selected:
         print("[abort] no tasks matched the filters. --list shows what is available.")
         return {}
+
+    # Fail before any episode if the simulated user can't be reached at all (dead key, empty
+    # credit balance) — the same spirit as the robot preflight: don't spend a run to find out.
+    try:
+        simulated_user.preflight_user_model()
+    except SimulatedUserUnavailable as e:
+        print(f"\n[abort] {e}")
+        return {}
+    except SimulatedUserError as e:
+        print(f"[warn] simulated-user preflight failed ({e}); continuing anyway.")
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
     out_dir = config.DATA_DIR / f"eval_{arch.name}_{stamp}"
@@ -278,6 +308,14 @@ async def run(args) -> dict:
                 json.dump(run_record, f, indent=2)
             with open(out_dir / "summary.txt", "w") as f:
                 f.write(score.format_summary(run_record["summary"], arch=arch.name) + "\n")
+            if ep.get("fatal"):
+                print(f"[abort] {ep['error']}\n"
+                      f"        Stopping the run — every remaining episode would fail the same "
+                      f"way ({episodes_planned - n} not attempted).")
+                run_record["aborted_after"] = n
+                break
+        if run_record.get("aborted_after"):
+            break
 
     print(score.format_summary(run_record["summary"], arch=arch.name))
     print(f"\n   {out_dir}/run.json   (summary also in summary.txt)")

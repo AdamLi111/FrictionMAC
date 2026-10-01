@@ -368,6 +368,15 @@ simulated user instead of a keyboard.
 | `LOG_LEVEL` | console transcript level: `INFO`/`DEBUG`/`FULL` | `DEBUG` |
 | `WORLD_STATE_PATH` / `TOOL_LOG_PATH` | world memory / tool-call log paths | under `data/` |
 | `SIM_STATE_PATH` | where the sim mirrors its live ground-truth world (the eval harness sets one per episode) | `data/sim_state.json` |
+
+The **agents' world model** (what `get_world` / `update_world` / `get_known_location` read and
+write) lives in `data/agent_world_state.json` for real-robot runs, `data/sim_world_<scene>.json`
+in sim, and one file per episode under an eval run. It is written **lazily — the file does not
+exist until an agent actually calls `update_world`**, so a missing file means nothing was ever
+recorded (a command like "turn left" or "say hi" never touches it; recording needs a perceive →
+`map` cycle), not that anything is misconfigured. The console prints the path it will use on
+startup. Note that launching the MCP server by hand (`python -m robot_tools.server`, with no
+`WORLD_STATE_PATH` in the environment) uses a *different* default — `data/world_state.json`.
 | `SIM_USER_MODEL` | model backing the simulated user in `evaluation/` | `claude-haiku-4-5` |
 | `ANTHROPIC_API_KEY` | read from `.env`; the simulated user calls the Messages API directly | — |
 

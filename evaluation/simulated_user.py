@@ -101,6 +101,44 @@ class SimulatedUserError(RuntimeError):
     """The user LLM could not be reached / responded unusably. Ends the episode cleanly."""
 
 
+class SimulatedUserUnavailable(SimulatedUserError):
+    """The user model can't be reached for a reason no retry will fix — an exhausted credit
+    balance, a bad key, a revoked permission. Every remaining episode would fail the same way,
+    so the runner stops the whole batch instead of burning robot sessions on it."""
+
+
+# 400s whose message names a billing problem are permanent, unlike ordinary 400s.
+_FATAL_STATUS = (401, 403)
+_FATAL_HINTS = ("credit balance", "billing", "quota")
+
+
+def _fatal(status: int | None, message: str) -> bool:
+    low = (message or "").lower()
+    return status in _FATAL_STATUS or any(hint in low for hint in _FATAL_HINTS)
+
+
+def preflight_user_model(model: str = MODEL, client=None) -> None:
+    """Check the simulated user can actually be reached, BEFORE any episode starts.
+
+    Mirrors `config.preflight_robot`: a dead key or an empty credit balance would otherwise fail
+    every episode identically, several API-free seconds apart, after spinning up a robot session
+    each time. One near-empty request settles it."""
+    client = client or anthropic.Anthropic()
+    try:
+        client.messages.create(model=model, max_tokens=1,
+                               messages=[{"role": "user", "content": "hi"}])
+    except anthropic.APIStatusError as e:
+        if _fatal(e.status_code, str(e.message)):
+            raise SimulatedUserUnavailable(
+                f"The simulated user cannot reach the API ({e.status_code}): {e.message}\n"
+                f"  - This is the Messages API key in .env (ANTHROPIC_API_KEY), not the Claude "
+                f"Code CLI login the robot agents use.\n"
+                f"  - Nothing will run until it is fixed; no episodes were started.") from e
+        raise SimulatedUserError(f"simulated user API error {e.status_code}: {e.message}") from e
+    except anthropic.APIConnectionError as e:
+        raise SimulatedUserError(f"simulated user connection error: {e}") from e
+
+
 class SimulatedUser:
     """One user, for one task, for one episode. Not reusable across tasks (the goal and the
     conversation are baked in at construction)."""
@@ -172,6 +210,9 @@ class SimulatedUser:
                 messages=self.messages,
             )
         except anthropic.APIStatusError as e:
+            if _fatal(e.status_code, str(e.message)):
+                raise SimulatedUserUnavailable(
+                    f"simulated user API error {e.status_code}: {e.message}") from e
             raise SimulatedUserError(f"simulated user API error {e.status_code}: {e.message}") from e
         except anthropic.APIConnectionError as e:
             raise SimulatedUserError(f"simulated user connection error: {e}") from e
