@@ -21,10 +21,12 @@ that cleanly:
 Run (real robot):    MISTY_IP=172.20.10.2 .venv-agent/bin/python -m scripts.hw_console
 Run (dry, no robot): .venv-agent/bin/python -m scripts.hw_console
 
-Type 'quit' (or Ctrl-C) to end.
+Type 'quit' (or Ctrl-C) to end. Either way the world state is cleared to {} on exit.
 """
+import asyncio
 import math
 import os
+import threading
 import time
 
 import anyio
@@ -36,6 +38,7 @@ from claude_agent_sdk import (
 )
 
 from agent_runtime import config, main as agent_main
+from robot_tools.world_state import clear_worldstate
 
 SPEAK = config.robot_tool("speak")
 QUIT = {"quit", "exit", "q", ":q"}
@@ -200,6 +203,34 @@ async def _collect_turn(recv, logs, sess) -> bool:
     return turn["spoke"]
 
 
+async def _ainput(prompt: str) -> str:
+    """input() on a daemon thread. anyio's worker threads are non-daemon, so a read still
+    blocked after Ctrl-C would hang interpreter exit until the user pressed Enter."""
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+
+    def worker():
+        try:
+            res, err = input(prompt), None
+        except BaseException as e:   # EOFError etc. — re-raised in the caller
+            res, err = None, e
+
+        def deliver():
+            if fut.done():
+                return
+            if err is not None:
+                fut.set_exception(err)
+            else:
+                fut.set_result(res)
+        try:
+            loop.call_soon_threadsafe(deliver)
+        except RuntimeError:          # loop already closed (session ended)
+            pass
+
+    threading.Thread(target=worker, daemon=True).start()
+    return await fut
+
+
 async def run():
     config.load_env()
     config.DATA_DIR.mkdir(exist_ok=True)
@@ -211,7 +242,7 @@ async def run():
         level = "DEBUG"
     transcript = config.DATA_DIR / f"hw_session_{stamp}.{level.lower()}.log"
     tool_log = config.DATA_DIR / f"hw_session_{stamp}_tools.jsonl"
-    world = config.DATA_DIR / "agent_world_state.json"
+    world = agent_main.DEFAULT_WORLD_STATE
     os.environ["AGENT_EVENT_LOG"] = str(config.DATA_DIR / f"hw_session_{stamp}_events.jsonl")
 
     logs = Logs(transcript, level)
@@ -244,7 +275,7 @@ async def run():
                 try:
                     while True:
                         try:
-                            cmd = (await anyio.to_thread.run_sync(lambda: input("you> "))).strip()
+                            cmd = (await _ainput("you> ")).strip()
                         except (EOFError, KeyboardInterrupt):
                             print()
                             break
@@ -267,5 +298,17 @@ async def run():
         print(f"\nSession ended. Transcript ({level}): {transcript}")
 
 
+def main():
+    # Clear AFTER anyio.run returns: by then the client has disconnected and the robot MCP
+    # server (the only writer of the world file) has exited, so nothing can re-populate it.
+    try:
+        anyio.run(run)
+    except KeyboardInterrupt:
+        print("\n(interrupted)")
+    finally:
+        clear_worldstate(agent_main.DEFAULT_WORLD_STATE)
+        print(f"World state cleared: {agent_main.DEFAULT_WORLD_STATE}")
+
+
 if __name__ == "__main__":
-    anyio.run(run)
+    main()

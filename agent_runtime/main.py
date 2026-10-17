@@ -28,6 +28,7 @@ from claude_agent_sdk import (
 )
 
 from agent_runtime import config, experts, hooks
+from robot_tools.world_state import clear_worldstate
 
 DEFAULT_TOOL_LOG = config.DATA_DIR / "agent_tool_calls.jsonl"
 DEFAULT_WORLD_STATE = config.DATA_DIR / "agent_world_state.json"
@@ -143,7 +144,13 @@ async def run(prompt: str, *, tool_log=None, world_state=None, scene=None) -> di
 def main():
     prompt = sys.argv[1] if len(sys.argv) > 1 else "move forward 1 meter"
     scene = os.environ.get("ROBOT_STUB_SCENE")  # allow scripted scene from env for manual runs
-    anyio.run(lambda: run(prompt, scene=scene))
+    # The session ends when the command finishes or on Ctrl-C; either way, reset the world.
+    try:
+        anyio.run(lambda: run(prompt, scene=scene))
+    except KeyboardInterrupt:
+        print("\n[interrupted]")
+    finally:
+        clear_worldstate(DEFAULT_WORLD_STATE)
 
 
 if __name__ == "__main__":

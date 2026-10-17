@@ -18,6 +18,15 @@ class WorldStateError(Exception):
     pass
 
 
+def clear_worldstate(path) -> None:
+    """Reset the world state file at `path` to a valid empty JSON object ({}).
+
+    Called when a session ends (quit / Ctrl-C) so the next session starts with no memory.
+    Uses the same atomic write as normal updates, so an interrupt mid-clear can't leave a
+    half-written file."""
+    WorldState(str(path))._atomic_write({})
+
+
 class WorldState:
     def __init__(self, path: str, logger=None):
         self.path = path

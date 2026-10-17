@@ -252,3 +252,18 @@ def test_motor_locks_serialize_same_resource_but_not_different(stub_env):
         left.release()
     finally:
         drive.release()
+
+
+# ------------------------------------------- session end: clear the world state to {}
+def test_clear_worldstate(tmp_path):
+    from robot_tools.world_state import WorldState, clear_worldstate
+
+    path = tmp_path / "world_state.json"
+    WorldState(str(path)).update_world("mug", {"location": "kitchen counter"})
+    clear_worldstate(path)
+    assert json.loads(path.read_text()) == {}
+    assert WorldState(str(path)).snapshot() == {}
+
+    missing = tmp_path / "never_written.json"   # also valid when no file existed yet
+    clear_worldstate(missing)
+    assert json.loads(missing.read_text()) == {}
