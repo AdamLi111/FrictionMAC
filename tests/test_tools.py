@@ -228,3 +228,12 @@ def test_motor_locks_serialize_same_resource_but_not_different(stub_env):
         left.release()
     finally:
         drive.release()
+
+
+# ------------------------------------------ Test 8: the MCP server itself loads
+def test_the_mcp_server_module_imports():
+    """Nothing above imports server.py, so an MCP SDK it can't run on (mcp 2.x renamed FastMCP)
+    passed every test and only surfaced at runtime, as every expert failing with
+    "unrecognized [mcp__robot__speak]". Importing it registers the tools but starts nothing."""
+    pytest.importorskip("mcp")
+    import robot_tools.server  # noqa: F401

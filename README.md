@@ -131,14 +131,16 @@ delegation is denied with a reason that says what has to happen first:
 
 ## Setup (from a fresh clone)
 
-Four things, and **three of them are not Python** — the most common failure is stopping after
-the venvs and getting `Claude Code not found`.
+Four things. The CLI used to be the one people missed (`Claude Code not found`); current SDK
+wheels bundle it, so step 2 now covers it on a machine without Node.
 
 ```bash
-# 1. The Claude Code CLI. The Agent SDK does not contain the agent runtime — it shells out to
-#    this binary, so nothing works without it. Needs Node 18+.
-npm install -g @anthropic-ai/claude-code
-claude --version          # must print a version; if not, it isn't on PATH
+# 1. The Claude Code CLI. The Agent SDK is a wrapper that shells out to this binary, so nothing
+#    works without it. Current claude-agent-sdk wheels BUNDLE it (installed in step 2), and
+#    config.find_cli() falls back to that copy. Install your own only to pin a version or if
+#    your SDK predates bundling (needs Node 18+); a `claude` on PATH wins over the bundled one.
+npm install -g @anthropic-ai/claude-code   # optional
+claude --version
 
 # 2. The two Python environments (they are deliberately separate — see the top of this file).
 python -m venv .venv        && .venv/bin/pip install -e ".[dev]"      # robot env (MCP tools)

@@ -87,12 +87,27 @@ _CLI_FALLBACKS = ("/opt/homebrew/bin/claude", "/usr/local/bin/claude",
                   "~/.npm-global/bin/claude", "~/.local/bin/claude")
 
 
+def bundled_cli() -> Path | None:
+    """The CLI binary current `claude-agent-sdk` wheels ship inside the package
+    (`claude_agent_sdk/_bundled/`), or None: older SDKs don't bundle one, and the robot env has
+    no SDK at all. The SDK's own lookup would find it, but `find_cli` hands the SDK an explicit
+    path, so it has to look here itself."""
+    try:
+        import claude_agent_sdk
+    except ImportError:
+        return None
+    name = "claude.exe" if os.name == "nt" else "claude"
+    path = Path(claude_agent_sdk.__file__).resolve().parent / "_bundled" / name
+    return path if path.is_file() else None
+
+
 def find_cli() -> str:
     """Absolute path to the Claude Code CLI the Agent SDK shells out to.
 
-    The SDK is a Python wrapper around that binary, not a replacement for it: `pip install
-    claude-agent-sdk` does NOT provide it, and without it every entry point fails with
-    "Claude Code not found"."""
+    The SDK is a Python wrapper around that binary. A CLI on PATH (or at a usual install spot)
+    wins, so a deliberately installed version is the one that runs; failing that, the copy
+    bundled in the SDK wheel, which is all a fresh clone on a machine without Node has. With
+    neither, every entry point would fail with "Claude Code not found"."""
     cli = shutil.which("claude")
     if cli:
         return cli
@@ -100,13 +115,16 @@ def find_cli() -> str:
         path = Path(candidate).expanduser()
         if path.exists():
             return str(path)
+    bundled = bundled_cli()
+    if bundled:
+        return str(bundled)
     raise ClaudeCodeMissing(
         "The Claude Code CLI ('claude') was not found, and the Agent SDK needs it — it runs "
         "the agents by shelling out to that binary.\n"
-        "  - Install it (needs Node 18+):  npm install -g @anthropic-ai/claude-code\n"
-        "  - Then check it is on PATH:     claude --version\n"
-        f"  - Looked on PATH and at: {', '.join(_CLI_FALLBACKS)}\n"
-        "`pip install claude-agent-sdk` installs only the Python wrapper, not the CLI.")
+        "  - Current claude-agent-sdk wheels bundle it; reinstall the SDK in the agent env:\n"
+        "        .venv-agent/bin/pip install -U claude-agent-sdk\n"
+        "  - Or install it yourself (needs Node 18+):  npm install -g @anthropic-ai/claude-code\n"
+        f"  - Looked on PATH, at {', '.join(_CLI_FALLBACKS)}, and inside the SDK package.")
 
 
 def read_steering(name: str) -> str:

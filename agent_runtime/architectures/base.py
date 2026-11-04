@@ -88,9 +88,10 @@ class Architecture(ABC):
             # conversation. Raise it generously (env-tunable).
             max_buffer_size=int(os.environ.get("SDK_MAX_BUFFER_MB", "64")) * 1024 * 1024,
         )
-        extra = self.subprocess_env()
-        if extra:
-            # env passed to the CLI subprocess; merge over the inherited environment so we
-            # only add (e.g. the agent-teams flag), never drop PATH / ANTHROPIC_API_KEY.
-            opts.env = {**os.environ, **extra}
+        # Hermetic in the same sense as setting_sources=[]: without this switch the CLI also loads
+        # the logged-in account's claude.ai connectors into every robot session.
+        extra = {"ENABLE_CLAUDEAI_MCP_SERVERS": "false", **self.subprocess_env()}
+        # env passed to the CLI subprocess; merge over the inherited environment so we only add
+        # (e.g. the agent-teams flag), never drop PATH / ANTHROPIC_API_KEY.
+        opts.env = {**os.environ, **extra}
         return opts
