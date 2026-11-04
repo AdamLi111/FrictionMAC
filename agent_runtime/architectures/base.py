@@ -12,6 +12,7 @@ A subclass supplies the pieces that actually differ between topologies:
   - `agents()`          : the AgentDefinition registry (all delegatable agents, flat)
   - `allowed_tools()`   : tools the top-level agent may use (delegation + auto-approval set)
   - `subprocess_env()`  : extra env for the CLI subprocess (e.g. agent-teams flag)
+  - `hook_set()`        : the shared hooks, plus any protocol a variant enforces (V5's gate)
 Everything shared (model, MCP wiring, hooks, permission mode, hermetic settings) lives in
 `build_options()` here so variants stay small and comparable.
 """
@@ -58,6 +59,12 @@ class Architecture(ABC):
         """Extra env vars for the Claude CLI subprocess (merged over os.environ)."""
         return {}
 
+    def hook_set(self, agent_names: set) -> dict:
+        """Hooks for this run option: the shared logging and gates, including the one that
+        denies any delegation whose subagent_type isn't in `agent_names`. A variant that
+        enforces a protocol of its own (V5's negotiation gate) merges its matchers over this."""
+        return hooks.build_hooks(valid_agents=agent_names)
+
     # ---- shared assembly ----
     def build_options(self, tool_log, world_state, scene=None) -> ClaudeAgentOptions:
         agents = self.agents()
@@ -72,7 +79,7 @@ class Architecture(ABC):
             # Gate delegation to exactly this architecture's agents (blocks the general-purpose
             # fallback on a typeless/unknown subagent_type). Empty for single-agent V3, which
             # has no Agent tool anyway.
-            hooks=hooks.build_hooks(valid_agents=set(agents.keys())),
+            hooks=self.hook_set(set(agents.keys())),
             permission_mode="default",
             setting_sources=[],          # hermetic: ignore ambient .claude/settings.json
             max_turns=self.max_turns,

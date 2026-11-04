@@ -16,12 +16,14 @@ from agent_runtime.architectures.v1_flat import FlatArchitecture
 from agent_runtime.architectures.v2_managers import DomainManagerArchitecture
 from agent_runtime.architectures.v3_single import SingleAgentArchitecture
 from agent_runtime.architectures.v4_flat_no_approval import FlatNoApprovalArchitecture
+from agent_runtime.architectures.v5_negotiator import NegotiatorArchitecture
 
 _REGISTRY: dict[str, type[Architecture]] = {
     FlatArchitecture.name: FlatArchitecture,
     DomainManagerArchitecture.name: DomainManagerArchitecture,
     SingleAgentArchitecture.name: SingleAgentArchitecture,
     FlatNoApprovalArchitecture.name: FlatNoApprovalArchitecture,
+    NegotiatorArchitecture.name: NegotiatorArchitecture,
 }
 
 DEFAULT_ARCH = "v1"

@@ -6,6 +6,8 @@ Two builders, one per architecture (each reads its own self-contained steering d
   build_agents()    -> V1 experts (steering/v1/*.md): propose->approve->speak, no peer talk.
   build_agents_v2() -> V2 experts (steering/v2/*.md): named teammates that SendMessage peers,
                        no approval; +SendMessage/ToolSearch on top of their robot tools.
+  build_agents_v5() -> V4's experts + the negotiator (steering/v5/), which owns the decision
+                       to apply positive friction.
 
 Clusters:
   World-Understanding : object-lookup (the sole perceiver), map (owns the world model +
@@ -91,6 +93,37 @@ def build_agents_v4() -> dict:
     agents["friction"].description = (
         "Speaks a POSITIVE-FRICTION utterance (clarify / reveal assumption / pause / etc.) "
         "directly, with the right friction_type; also voices user-facing clarifying questions.")
+    return agents
+
+
+def build_agents_v5() -> dict:
+    """V5 experts: V4's six plus the negotiator, which now owns the decision to apply friction.
+    Object-lookup, map, navigation, expression and regular-utterance keep V4's steering verbatim,
+    so V4 → V5 isolates the negotiator. Two V4 pieces change with the decision: friction reads
+    steering/v5/friction.md (it voices the negotiator's verdict rather than deciding when friction
+    applies), and map's description drops "judges ambiguity" so the Director doesn't send that
+    question to map instead."""
+    agents = build_agents_v4()
+    agents["friction"].prompt = config.read_steering("v5/friction.md")
+    agents["friction"].description = (
+        "Voices the POSITIVE-FRICTION move the negotiator chose — its FRICTION_TYPE and what to "
+        "SURFACE — as one natural utterance, and speaks it directly.")
+    agents["map"].description = (
+        "Owns the world model — records what was just seen accurately and consistently "
+        "(canonical schema, no duplicates, shared props like room kept consistent). Reads the "
+        "latest captured image with get_last_view; does NOT scan.")
+    agents["negotiator"] = AgentDefinition(
+        description=("Decides WHEN Misty slows down. Judges every user turn, and every surprise "
+                     "an expert reports, for positive friction, and returns a VERDICT: PROCEED, "
+                     "GATHER (look first) or FRICTION (ask or reveal first), with the friction "
+                     "type, what to surface, and the resolved intent. Consult it first, in the "
+                     "foreground."),
+        prompt=config.read_steering("v5/negotiator.md"),
+        # Read-only: memory and the last view. It judges; it never moves, looks anew, or speaks.
+        tools=_rt("get_world", "get_known_location", "get_last_view"),
+        mcpServers=[config.ROBOT_SERVER],
+        model="inherit",
+    )
     return agents
 
 

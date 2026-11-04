@@ -52,6 +52,17 @@ def test_background_launch_ack_is_not_rendered_as_a_report(story):
     assert "abc123" not in out
 
 
+def test_a_refused_delegation_is_not_rendered_as_the_agents_report(story):
+    """A hook-refused delegation (V5's negotiation gate) comes back on the delegation's own
+    tool_use_id, so it reaches the story as a 'report' — but the agent never ran."""
+    story.event({"kind": "report", "agent": "navigation", "error": True,
+                 "content": "Held: the negotiator called for positive friction (probing)."})
+    out = _text(story)
+    assert "navigation ▪ reports back" not in out
+    assert "✗ navigation did not report: the delegation was refused or failed" in out
+    assert "Held: the negotiator called for positive friction (probing)." in out
+
+
 def test_report_trailers_are_stripped(story):
     story.event({"kind": "report", "agent": "map",
                  "content": "Recorded both cups.\nagentId: a1b2 (use SendMessage ...)\n"

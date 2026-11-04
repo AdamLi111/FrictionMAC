@@ -269,7 +269,10 @@ class TurnEngine:
                     # tool result at all — it is the subagent's report coming back.
                     src = self.agent_of.get(getattr(b, "tool_use_id", None) or "")
                     if src:
-                        self.trace({"kind": "report", "agent": src, "content": b.content})
+                        # `is_error` marks a delegation that never produced a report: a hook
+                        # refused it (V5's negotiation gate, the subagent-type gate) or it failed.
+                        self.trace({"kind": "report", "agent": src, "content": b.content,
+                                    "error": bool(getattr(b, "is_error", False))})
                     else:
                         self.trace({"kind": "tool_result", "agent": who, "content": b.content})
                 elif hasattr(b, "text") and b.text.strip():

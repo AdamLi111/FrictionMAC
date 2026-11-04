@@ -213,6 +213,15 @@ class NarrativeLog:
                             f"report arrives later)")
                 self._write()
                 return
+            if e.get("error"):
+                # Not a report either: the delegation was refused before the agent ran (e.g. held
+                # by V5's negotiation gate) or the agent failed. Say so rather than put words in
+                # its mouth.
+                self._write(f"{' ' * indent}✗ {who} did not report: the delegation was refused "
+                            f"or failed")
+                self._block(_strip_trailers(body), indent + 4)
+                self._write()
+                return
             self._write(f"{' ' * indent}{who} ▪ reports back to the Director")
             self._block(_strip_trailers(body), indent + 4)
             self._write()

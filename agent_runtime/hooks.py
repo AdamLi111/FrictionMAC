@@ -13,8 +13,6 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from claude_agent_sdk import HookMatcher
-
 SPEAK = "mcp__robot__speak"
 
 
@@ -125,6 +123,10 @@ def build_hooks(valid_agents=None) -> dict:
     """Build the hook set. `valid_agents` is the set of delegatable agent names for the active
     architecture; when non-empty, a PreToolUse gate on the `Agent`/`Task` tool denies any
     delegation whose subagent_type isn't in it (blocking the general-purpose fallback)."""
+    # Imported here, not at the top, so the callbacks above (and negotiation.py, built on them)
+    # import without the SDK and their tests run in the robot env too.
+    from claude_agent_sdk import HookMatcher
+
     pre = [
         HookMatcher(matcher=SPEAK, hooks=[friction_gate]),   # inert friction gate
         HookMatcher(matcher="^mcp__", hooks=[tool_logger]),  # all robot tools
@@ -137,3 +139,13 @@ def build_hooks(valid_agents=None) -> dict:
         "SubagentStart": [HookMatcher(hooks=[subagent_start])],
         "SubagentStop": [HookMatcher(hooks=[subagent_stop])],
     }
+
+
+def merge_hooks(*hook_sets: dict) -> dict:
+    """Combine hook sets event by event. Every matcher of an event still runs (in parallel) and
+    any deny wins, so a variant's gates merged over this set never lift one of its denials."""
+    merged: dict = {}
+    for hook_set in hook_sets:
+        for event, matchers in hook_set.items():
+            merged.setdefault(event, []).extend(matchers)
+    return merged

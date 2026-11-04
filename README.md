@@ -8,7 +8,7 @@ two Python environments, talking over MCP:
   the robot env (`.venv`).
 - **`agent_runtime/`** — a **Director** agent that delegates to six domain-expert subagents,
   connected to the robot MCP server. Runs in the agent env (`.venv-agent`, Python ≥3.10, has
-  `claude-agent-sdk`). Ships **four selectable architectures** (see below); pick one with
+  `claude-agent-sdk`). Ships **five selectable architectures** (see below); pick one with
   `AGENT_ARCH`.
 
 On top of those sits **`evaluation/`** — a task list and a simulated user, for running the whole
@@ -54,6 +54,9 @@ Robot access has two modes, chosen by `MISTY_IP`: **real** (fails loudly if unre
 - **Dialogue-Management:** `regular-utterance` (normal speech) and `friction` (positive-
   friction utterances). Both *propose* wording; the Director approves, then a fresh
   delegation speaks it.
+- **v5 only — `negotiator`:** owns the decision to apply positive friction, which every other
+  architecture leaves to the Director. Read-only (memory + last view); see
+  [V5: the negotiator](#v5-the-negotiator-decides-when-misty-slows-down).
 
 Behavior lives in the steering files under [`agent_runtime/steering/`](agent_runtime/steering/),
 not in code.
@@ -72,6 +75,7 @@ touches nothing else. New variants (V3, …) drop in as another subclass + regis
 | `v2` | **Managers:** Director → 3 Domain Managers → 6 experts, mutually addressable | A mid-layer of Domain Managers (World-Understanding / Action-Space / Dialogue) parses and re-delegates. Every agent is spawned with a `name`, which makes it **addressable by `SendMessage` and resumable** — messaging an idle agent reloads its transcript, so a manager keeps context across tasks. Coordination flows sideways (manager↔manager) on top of the `Agent` hierarchy that carries tasks down. Managers coordinate only (no robot tools); actuation stays at the experts. **No approval gate.** The two perceivers (`object-lookup`, `map`) are spawned **fresh per task** (never resumed) so camera frames don't accumulate. |
 | `v3` | **Single agent:** one agent holds **all** the tools and talks to the user directly | No delegation, no subagents — one agent perceives, reasons, moves, expresses, keeps the world model, and speaks itself. The baseline the multi-agent variants are compared against. |
 | `v4` | **Flat, no approval:** Director → 6 experts (3 clusters) | Same topology as `v1`, but **every approval gate removed** — dialogue agents speak directly and navigation plans-and-drives directly (no propose → approve step). Isolates the effect of the approval gate against `v1`. |
+| `v5` | **Flat + negotiator:** Director → negotiator + 6 experts | `v4` plus a **negotiator** that decides when Misty applies positive friction, enforced in code (below). The other experts read `v4`'s steering verbatim, so `v4` vs `v5` isolates the negotiator. |
 
 - **These are named subagents, not a Claude Code "agent team".** Agent teams require an
   interactive session and are never formed from an Agent SDK session, so no team config, shared
@@ -89,6 +93,41 @@ touches nothing else. New variants (V3, …) drop in as another subclass + regis
   needs the user consulted finishes its task with `STATUS: NEED_USER_INFO: <question>`, which the
   Director resolves (via the dialogue-manager → friction → user), then re-delegates — the same
   reliable return-and-continue channel V1 uses.
+
+### V5: the negotiator decides when Misty slows down
+
+In `v1`–`v4` the friction agent only *words* a friction turn; *whether* to slow down is the
+Director's call, made from a generic sense of "ambiguity". `v5` moves that decision to a
+**negotiator** whose steering ([`v5/negotiator.md`](agent_runtime/steering/v5/negotiator.md))
+carries the positive-friction ontology ([İnan et al., 2025](https://arxiv.org/abs/2501.17348)),
+MAC-style ambiguity triggers ([Acikgoz et al., 2025](https://arxiv.org/abs/2512.13154)) mapped to
+the robot's world, and a budget against over-friction. Every judgment ends with a verdict:
+
+- `PROCEED`: act, optionally voicing a non-blocking `assumption_reveal` / `overspecification`;
+- `GATHER`: look before deciding; the negotiator is consulted again with what perception found;
+- `FRICTION`: voice the friction move (its type, and what to surface) before acting, then wait.
+
+Steering can't guarantee the Director asks, or obeys, so
+[`negotiation.py`](agent_runtime/negotiation.py) enforces the protocol with hooks. A held
+delegation is denied with a reason that says what has to happen first:
+
+| Phase | Entered on | Held |
+|---|---|---|
+| `JUDGE` | a new user turn; an expert's final `STATUS` of `MULTIPLE` / `NOT_FOUND` / `AMBIGUOUS` / `NONE` / `INFEASIBLE` (a checkpoint) | everything but `negotiator` and `map` |
+| `GATHER` | `VERDICT: GATHER` | `navigation` |
+| `FRICTION` | `VERDICT: FRICTION` | `navigation`, `regular-utterance` |
+| `ASKED` | the friction move was spoken | `navigation`, `regular-utterance`, `friction` (Misty asks once) |
+| `CLEAR` | `VERDICT: PROCEED` | — |
+
+- **The negotiator hears the user directly.** The same hooks record the dialogue verbatim (user
+  turns from `UserPromptSubmit`, robot speech from `speak`) and append it to every negotiator
+  brief, so its judgment never rests on the Director's paraphrase.
+- **Auditable, and fails open.** Verdicts (with trigger and friction type), holds and phase
+  changes go to the agent event log (`*_events.jsonl`). A report with no readable `VERDICT` line
+  releases the holds, as does a third consult when no verdict has reached the gate; both are
+  logged, so a run can be checked for them.
+- **Cost.** One extra foreground delegation per user turn, plus one per checkpoint.
+- With `FRICTION_OFF=1` a `FRICTION` verdict holds nothing, since the utterance would be refused.
 
 ## Setup (from a fresh clone)
 
@@ -354,7 +393,7 @@ simulated user instead of a keyboard.
 
 | Var | Meaning | Default |
 |---|---|---|
-| `AGENT_ARCH` | architecture / run option (`v1` flat, `v2` managers, `v3` single agent, `v4` flat no-approval) | `v1` |
+| `AGENT_ARCH` | architecture / run option (`v1` flat, `v2` managers, `v3` single agent, `v4` flat no-approval, `v5` flat + negotiator) | `v1` |
 | `MISTY_IP` | Robot address; real mode is the default at this IP (override only if it differs) | `172.20.10.2` |
 | `ROBOT_STUB` | `1` = offline stub (same as `--stub` on the entry points) | unset → real |
 | `ROBOT_STUB_SCENE` | dir of `<direction>.jpg` frames the stub serves (perception tests) | unset |
