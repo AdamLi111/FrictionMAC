@@ -115,8 +115,10 @@ def shape_blocks_ray(shape, p, q) -> bool:
 
 
 def shape_samples(shape):
-    """Representative points ON the shape, for visibility/bearing estimation of extended
-    objects. A point yields itself; a segment/rect yields several points along its extent."""
+    """Representative points ON the shape: a point yields itself, a segment/rect several points
+    along its extent. Good for a shape's rough extent (scene bounds), NOT for what the camera
+    sees: a few points leave gaps the narrow cone can fall into close up, which is why the world
+    model finds extended objects by casting rays (`ray_surface_distance`) instead."""
     kind = shape["type"]
     if kind == "point":
         return [tuple(shape["position"])]
@@ -180,13 +182,42 @@ def ray_shape_distance(o, d, shape):
         (a, b) = shape["points"]
         return ray_segment_distance(o, d, a, b)
     if kind == "rect":
-        best = None
-        for (e0, e1) in _rect_edges(shape["min"], shape["max"]):
-            t = ray_segment_distance(o, d, e0, e1)
-            if t is not None and (best is None or t < best):
-                best = t
-        return best
+        return _ray_polygon_distance(o, d, _rect_edges(shape["min"], shape["max"]))
     return None
+
+
+def ray_surface_distance(o, d, shape):
+    """Distance along ray o+d (d a unit vector) to the first point of `shape`'s SOLID surface,
+    or None if the ray misses it. Unlike `ray_shape_distance`, which clips a sight-line at a
+    wall's centre-line, a wall's thickness counts here: its face is what a camera sees and what
+    the robot would hit. Points return None; they are too small for rays to find reliably, so
+    the world model locates them by their own bearing instead."""
+    kind = shape["type"]
+    if kind == "rect":
+        return ray_shape_distance(o, d, shape)
+    if kind != "segment":
+        return None
+    (a, b) = shape["points"]
+    half = shape.get("thickness", 0.0) / 2.0
+    ex, ey = b[0] - a[0], b[1] - a[1]
+    length = math.hypot(ex, ey)
+    if half <= 0.0 or length < 1e-12:
+        return ray_segment_distance(o, d, a, b)
+    # The wall as the rectangle its thickness sweeps out (collision rounds the two ends off,
+    # a difference of at most half the thickness at the very end of a wall).
+    nx, ny = -ey / length * half, ex / length * half
+    c = ((a[0] + nx, a[1] + ny), (b[0] + nx, b[1] + ny),
+         (b[0] - nx, b[1] - ny), (a[0] - nx, a[1] - ny))
+    return _ray_polygon_distance(o, d, ((c[0], c[1]), (c[1], c[2]), (c[2], c[3]), (c[3], c[0])))
+
+
+def _ray_polygon_distance(o, d, edges):
+    best = None
+    for (e0, e1) in edges:
+        t = ray_segment_distance(o, d, e0, e1)
+        if t is not None and (best is None or t < best):
+            best = t
+    return best
 
 
 # --------------------------------------------------------------------------- bearings

@@ -21,6 +21,7 @@ DEFAULT_FOV_DEGREES = 45.0        # matches the real Misty's narrow camera
 DEFAULT_MAX_VIEW = 8.0            # metres
 ROBOT_RADIUS = 0.12              # collision disc for the robot body
 _STEP = 0.01                     # path-marching resolution for collision (metres)
+RAY_STEP_DEGREES = 0.5           # spacing of the sight-rays that find walls and furniture
 
 
 class SimObject:
@@ -122,9 +123,17 @@ class SimWorld:
         return col
 
     # ------------------------------------------------------------------ perception
-    def _visible_samples(self, obj):
-        """Samples of `obj` that are within FOV, in range, and not occluded by another object.
-        Returns a list of (distance, bearing) for the visible ones."""
+    def _visible_samples(self, obj, rays=None):
+        """(distance, bearing) for each part of `obj` the camera sees right now: inside the FOV,
+        in range, and not hidden behind another object.
+
+        An extended object (wall, furniture) is found by sight-rays (`_ray_hits`), so it is seen
+        however close the robot stands and whichever part of it is ahead, at the distance of its
+        face; `rays` reuses a cast already made from this pose. A point is too small for rays to
+        find reliably, so it is seen when its own bearing is in the FOV and the line to it is
+        clear."""
+        if obj.shape["type"] != "point":
+            return (rays if rays is not None else self._ray_hits(only=obj)).get(obj, [])
         half = self.fov / 2.0
         pos = (self.robot_pos[0], self.robot_pos[1])
         out = []
@@ -140,6 +149,33 @@ class SimWorld:
             out.append((dist, bearing))
         return out
 
+    def _ray_hits(self, only=None):
+        """Cast sight-rays edge to edge across the FOV, RAY_STEP_DEGREES apart, and return
+        {object: [(distance, bearing), ...]}: for each ray, the extended object whose solid
+        surface it meets first within range (whatever lies behind that is hidden on that ray).
+        With `only`, rays that miss that object are skipped, which keeps a one-object question
+        such as evaluation.tasks.visibility's cheap."""
+        pos = (self.robot_pos[0], self.robot_pos[1])
+        extended = [o for o in self.objects if o.shape["type"] != "point"]
+        n = max(2, int(round(self.fov / RAY_STEP_DEGREES)) + 1)
+        hits = {}
+        for i in range(n):
+            bearing = -self.fov / 2.0 + self.fov * i / (n - 1)
+            rad = math.radians(self.heading + bearing)
+            ray = (math.sin(rad), math.cos(rad))
+            if only is not None:
+                t = geo.ray_surface_distance(pos, ray, only.shape)
+                if t is None or t > self.max_view:
+                    continue
+            first, first_t = None, None
+            for obj in extended:
+                t = geo.ray_surface_distance(pos, ray, obj.shape)
+                if t is not None and t <= self.max_view and (first_t is None or t < first_t):
+                    first, first_t = obj, t
+            if first is not None:
+                hits.setdefault(first, []).append((first_t, bearing))
+        return hits
+
     def _occluded(self, p, q, target_obj) -> bool:
         """True if any OTHER object's geometry blocks the sight-line p→q."""
         for obj in self.objects:
@@ -152,8 +188,9 @@ class SimWorld:
     def visible_objects(self):
         """List of visible objects with computed viewing geometry, nearest first."""
         seen = []
+        rays = self._ray_hits()             # one cast serves every extended object
         for obj in self.objects:
-            samples = self._visible_samples(obj)
+            samples = self._visible_samples(obj, rays)
             if not samples:
                 continue
             dist = min(s[0] for s in samples)

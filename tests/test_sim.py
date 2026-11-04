@@ -76,6 +76,69 @@ def test_wall_occludes_object_behind_it():
     assert any(o["name"] == "cup" for o in SimWorld(no_wall).visible_objects())
 
 
+def _seg(name, a, b):
+    return {"name": name, "shape": {"type": "segment", "points": [a, b], "thickness": 0.1}}
+
+
+def test_a_close_wall_is_seen_wherever_the_robot_meets_it():
+    """Walls used to be seen only through 7 points along their length, so close up, with none of
+    them inside the narrow cone, the view said "the way ahead looks clear/empty" a metre from
+    the wall, and the next move_forward hit it. 0.83 is midway between two of those points."""
+    for offset in (0.0, 0.5, 0.83):
+        for gap in (2.0, 1.0, 0.6, 0.3):
+            w = SimWorld(_scene(robot={"position": [offset, 0.0], "heading": 0},
+                                objects=[_seg("wall", [-5, gap], [5, gap])]))
+            seen = {o["name"]: o for o in w.visible_objects()}
+            assert "wall" in seen, (offset, gap)
+            # the distance to its face, straight ahead; not to the nearest of a few points
+            assert seen["wall"]["distance"] == pytest.approx(gap - 0.05, abs=0.01), (offset, gap)
+            assert "clear/empty" not in w.describe_view()
+
+
+def test_furniture_ahead_is_seen_at_its_nearest_face():
+    """Off-centre in front of a long table, none of its 9 old sample points (corners, edge
+    midpoints, centre) fell inside the cone: the table straight ahead was invisible."""
+    table = {"name": "table", "shape": {"type": "rect", "min": [-1.5, 1.0], "max": [1.5, 1.6]}}
+    w = SimWorld(_scene(robot={"position": [0.7, 0.0], "heading": 0}, objects=[table]))
+    seen = {o["name"]: o for o in w.visible_objects()}
+    assert seen["table"]["distance"] == pytest.approx(1.0, abs=0.01)
+
+
+def test_a_wall_hides_the_wall_behind_it_except_through_a_doorway():
+    far = _seg("far wall", [-4, 4], [4, 4])
+    solid = SimWorld(_scene(objects=[_seg("near wall", [-4, 2], [4, 2]), far]))
+    assert "far wall" not in {o["name"] for o in solid.visible_objects()}
+
+    doorway = SimWorld(_scene(objects=[_seg("near wall", [-4, 2], [-0.4, 2]),
+                                       _seg("near wall", [0.4, 2], [4, 2]), far]))
+    seen = {o["name"]: o for o in doorway.visible_objects()}
+    assert "near wall" in seen
+    # only the slice of the far wall that shows through the 0.8 m gap, about ±11° from here
+    assert -12 < seen["far wall"]["bearing_min"] < seen["far wall"]["bearing_max"] < 12
+
+
+def test_walls_outside_the_cone_stay_unseen():
+    w = SimWorld(_scene(objects=[_seg("side wall", [2, -1], [2, 1])]))   # off to the right
+    assert w.visible_objects() == []
+    w.turn(90)                                                         # face it
+    assert [o["name"] for o in w.visible_objects()] == ["side wall"]
+
+
+def test_a_one_object_visibility_check_agrees_with_the_full_view():
+    """evaluation.tasks.visibility asks about one target at a time through a cheaper cast; it
+    must see exactly what capture_view would from the same pose."""
+    from robot_tools.sim import load_scene
+
+    w = load_scene("office_kitchen")
+    for pos in ([-1.5, 0.0], [1.5, 2.5], [-2.0, 3.0]):
+        w.robot_pos = list(pos)
+        for heading in range(0, 360, 15):
+            w.heading = float(heading)
+            rays = w._ray_hits()
+            for obj in w.objects:
+                assert w._visible_samples(obj) == w._visible_samples(obj, rays), (pos, heading)
+
+
 def test_turn_sign_convention():
     w = SimWorld(_scene())
     w.turn(-90)                 # left = counter-clockwise

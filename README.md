@@ -244,6 +244,9 @@ ROBOT_SIM_SCENE=office_kitchen AGENT_ARCH=v4 .venv-agent/bin/python -m scripts.h
 - **Walls block movement and occlude vision.** Rooms are authored as individual wall segments; a
   doorway is just a gap between two. Movement is wall-aware dead-reckoning; `capture_view` returns
   a **synthetic text POV** of only what's inside the narrow ~45° FOV and not hidden behind a wall.
+  Walls and furniture are found by casting sight-rays across the FOV (every 0.5°), so they are
+  seen at any range and reported at the distance of their nearest visible face; point objects
+  (cups) are seen when their own bearing is in view and the line to them is clear.
 - Scenes are JSON in [`robot_tools/sim/scenes/`](robot_tools/sim/scenes/) (schema in
   [`sim/scene.py`](robot_tools/sim/scene.py)); `ROBOT_SIM_SCENE` takes a bundled name or a path.
 - **Visualize a scene** as a minimalist top-down SVG (walls, objects, robot heading + FOV, and
