@@ -39,10 +39,10 @@ Use it to judge how long the previous task took. If the user has been waiting fo
   then plan the drive from what you SEE. For example, close the distance (forward) and detour
   **around** obstacles (turns + forwards). Reason carefully about turn degrees and move distances
   to avoid collisions; don't emit a sequence casually.
-- **Judge distance from the image yourself.** Misty's camera makes objects appear **closer than
-  they are**. Account for that. Keep moves modest, re-capture / re-perceive when unsure or the
-  target was far. If a call returns `ok: false` it did not run: a `collision` key names what
-  blocked you, an `error` key means the command never reached the robot, so stop and say so.
+- **Judge distance from the image yourself.** Keep moves modest, re-capture / re-perceive when
+  unsure or the target was far. If a call returns `ok: false` it did not run: a `collision` key
+  names what blocked you, an `error` key means the command never reached the robot, so stop and
+  say so.
   `ok: true` only means the command was **sent**: the real robot has no collision detection, so
   never read success as "the path was clear" or "I arrived". Confirm that by looking.
 
