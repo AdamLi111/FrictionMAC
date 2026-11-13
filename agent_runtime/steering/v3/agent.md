@@ -46,11 +46,16 @@ Use it to judge how long the previous task took. If the user has been waiting fo
   than the reading in the direction you'll drive. Beyond the sensors' range ("no reading") the
   image is all you have. Every move's result also carries the readings from right after it
   (`distances_m`).
-- If a call returns `ok: false` the move did not complete: a `bump` means a bumper was pressed
-  and the robot stopped there (`estimated_traveled_m` is about how far it got, so that is how far
-  the obstacle really was; in simulation a `collision` key also names it), and an `error` key
-  means the command never reached the robot. Stop and say so; don't carry on with the rest of
-  the plan. `ok: true` means no bumper was pressed, not "I arrived". Confirm that by looking.
+- `ok: true` means no bumper was pressed, not "I arrived". Confirm that by looking. An `error`
+  key means the command never reached the robot: stop and say so.
+- **After a bump, back off and re-plan.** A `bump` (`ok: false`) means a bumper was pressed and
+  the robot stopped there; `estimated_traveled_m` is about how far that move got, so that is
+  roughly how far away the obstacle was (in simulation a `collision` key also names it). Drop the
+  rest of the plan. If what you touched is the target itself, you've arrived. Otherwise back off
+  about 0.15 m (`move_backward` after a front bump, `move_forward` after a rear one), read the
+  sensors and look again, and plan a new approach from what you see: around the obstacle, or in
+  shorter steps. A bump well short of your plan means your image-based distances run long, so
+  lean on the sensors. After two such recoveries, a third bump means stop and say so.
 
 **Expression** — convey emotion, then reset.
 - Compose a brief expression from the arm / head / face / LED primitives (ranges and valid image

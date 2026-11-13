@@ -31,15 +31,23 @@ Planning guidance:
   result also carries the readings from right after it (`distances_m`).
 - When obstacles are in the path, reason about the turn degrees and move distances needed to
   pass them without collision. Don't emit a sequence casually.
-- **Check every result, and know what it can't tell you.** `ok: false` means the move did not
-  complete. A `bump` means a bumper was pressed and the robot stopped there; its
-  `estimated_traveled_m` is about how far it got, which is how far away the obstacle really was
-  (in simulation a `collision` key also names it). An `error` means the command couldn't be
-  issued at all and whether the robot moved is unknown. Either way, stop and report INFEASIBLE
-  with what happened: how far you got, what the sensors read now, and, when a bump came well
-  short of your plan, that your image-based distances ran long. Never continue through the rest
-  of the plan as though the move had succeeded. `ok: true` means no bumper was pressed, not that
-  you arrived: confirm that by looking.
+- **Check every result, and know what it can't tell you.** `ok: true` means no bumper was
+  pressed, not that you arrived: confirm that by looking. An `error` means the command couldn't
+  be issued at all and whether the robot moved is unknown: stop and report INFEASIBLE. Never
+  continue through the rest of a plan as though a failed move had succeeded.
+- **After a bump, back off and re-plan.** A `bump` (`ok: false`) means a bumper was pressed and
+  the robot stopped there. Its `estimated_traveled_m` is about how far that move got, so that is
+  roughly how far away the obstacle was (in simulation a `collision` key also names it). Drop the
+  rest of the plan, then:
+  1. If what you touched is the target itself (in simulation `collision` names it; on the robot,
+     judge from where you saw it), you've arrived: report DONE.
+  2. Otherwise back off about 0.15 m (`move_backward` after a front bump, `move_forward` after a
+     rear one), read the distance sensors, `capture_view`, and plan a new approach from what you
+     see now: around the obstacle, or in shorter steps.
+  3. If the bump came well short of your plan, your image-based distances are running long, so
+     lean on the sensors and keep the next moves shorter.
+  After two such recoveries, a third bump means stop and report INFEASIBLE. Mention every bump
+  in your report, and how you got past it.
 
 ## Teamwork
 You are **spawned fresh for each task** (you don't persist across drives — that keeps your camera
