@@ -25,7 +25,7 @@ from typing import Literal, get_args
 import anyio
 from mcp.server.fastmcp import FastMCP, Image
 
-from . import runtime, tools
+from . import runtime, sensors, tools
 
 mcp = FastMCP("ponder-robot-tools")
 
@@ -86,40 +86,51 @@ def _frame_content(b64: str, label: str):
 
 # ---- movement (DRIVE) ----
 # Drive/turn calls hold one shared DRIVE lock, so two of them never overlap; a call on a
-# different motor (arm/head/face/LED) runs concurrently.
+# different motor (arm/head/face/LED) runs concurrently. Every movement result also carries the
+# distance sensors' readings after the move, and a "bump" block if a bumper was pressed.
 @mcp.tool()
 async def move_forward(distance: float = 1.0) -> dict:
     """Drive straight forward `distance` meters.
 
-    Returns {"ok": true, "duration_ms": N} when the command ran. `ok: false` has two distinct
-    causes, told apart by which key is present: "collision" (the path was blocked and the value
-    names the object hit -- SIMULATION ONLY), or "error" (the command could not be issued at all,
-    e.g. the robot became unreachable; whether it moved is unknown).
+    Returns {"ok": true, "duration_ms": N, "distances_m": {...}} when the move completed with no
+    bumper pressed; `distances_m` is the distance-sensor reading taken right after the move (the
+    same thing read_distance_sensors returns).
 
-    IMPORTANT: on the physical robot there is NO collision detection. A drive that bumps into
-    something still reports ok: true, so `ok: true` means "the command was sent", NEVER "the path
-    was clear" and never "I arrived". Confirm progress by looking (capture_view), not by the
-    return value."""
+    `ok: false` means the move did not complete as asked, and which key is present says why:
+      - "bump": a bumper was pressed, so the robot stopped early. It names the bumper(s) and
+        gives `after_ms` (how long into the move) and `estimated_traveled_m` (about how far the
+        robot got, estimated from the drive's timing). With `already_pressed: true` the robot did
+        not move at all: a bumper on that end was already pressed against something, and it
+        won't drive into it -- back up or turn first. In simulation a "collision" key also names
+        the object hit.
+      - "error": the command could not be issued at all (e.g. the robot became unreachable);
+        whether it moved is unknown.
+
+    `ok: true` means no bumper was pressed during the move. It does NOT mean "I arrived": confirm
+    progress by looking (capture_view). If a "sensors" key says offline, there was no sensor
+    data, so `ok: true` then says nothing about whether anything was touched."""
     return await _off(tools.move_forward, distance)
 
 
 @mcp.tool()
 async def move_backward(distance: float = 1.0) -> dict:
-    """Drive straight backward `distance` meters. Same return shape and same caveats as
-    move_forward -- including that a real-robot collision still reports ok: true, and that
-    nothing behind the robot is ever visible to the forward-facing camera."""
+    """Drive straight backward `distance` meters. Same return shape as move_forward. The rear
+    bumpers and the `back` distance sensor cover this direction; the forward-facing camera never
+    sees behind the robot."""
     return await _off(tools.move_backward, distance)
 
 
 @mcp.tool()
 async def turn_left(degrees: float) -> dict:
-    """Rotate left (counter-clockwise) `degrees` degrees in place."""
+    """Rotate left (counter-clockwise) `degrees` degrees in place. Returns {"ok": true,
+    "duration_ms": N, "distances_m": {...}}: the distance readings at the new heading. A bumper
+    pressed mid-turn stops it early (ok: false with a "bump" block, as for move_forward)."""
     return await _off(tools.turn_left, degrees)
 
 
 @mcp.tool()
 async def turn_right(degrees: float) -> dict:
-    """Rotate right (clockwise) `degrees` degrees in place."""
+    """Rotate right (clockwise) `degrees` degrees in place. Same return shape as turn_left."""
     return await _off(tools.turn_right, degrees)
 
 
@@ -127,6 +138,23 @@ async def turn_right(degrees: float) -> dict:
 async def stop() -> dict:
     """Stop all movement immediately (pre-empts an in-flight drive)."""
     return await _off(tools.stop)
+
+
+# ---- sensing (no motor) ----
+# The sensor names, range and the two sentinel values are interpolated from sensors.py, the
+# code that produces them, so no steering file needs to repeat them.
+@mcp.tool(description=(
+    f"Read the robot's distance sensors, without moving: {', '.join(sensors.RANGE_SENSORS)}. "
+    f"Three sit on the front of the base and one on the back. Each value is the distance in "
+    f"metres from the robot's body to the nearest surface inside that sensor's narrow cone: one "
+    f"number per sensor and no angle -- the direction is which sensor it is. They measure out "
+    f"to about {sensors.TOF_MAX_RANGE_M:g} m, at the height of the base. "
+    f"\"{sensors.NO_READING}\" means the sensor measured nothing reliable, usually because "
+    f"nothing is within range (likely open space, but not proof of it); \"{sensors.UNKNOWN}\" "
+    f"means no recent data from that sensor. Also returns `bumpers_pressed`: which of "
+    f"{', '.join(sensors.BUMPERS)} are pressed against something right now."))
+async def read_distance_sensors() -> dict:
+    return await _off(tools.read_distance_sensors)
 
 
 # ---- expression (ARM_LEFT / ARM_RIGHT / HEAD / FACE / LED) ----
@@ -264,8 +292,11 @@ async def get_world() -> dict:
 
 
 def main():
-    # Construct the robot up front so real mode fails loudly here if it's unreachable.
+    # Construct the robot up front so real mode fails loudly here if it's unreachable, and start
+    # the sensor stream now so the first drive is already watched for bumps (a stream that can't
+    # connect is not fatal: movement results then say the sensors are offline).
     runtime.get_robot()
+    runtime.get_sensors()
     mcp.run()
 
 

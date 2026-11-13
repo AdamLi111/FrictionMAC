@@ -24,18 +24,22 @@ def _clamp01(t: float) -> float:
     return 0.0 if t < 0.0 else 1.0 if t > 1.0 else t
 
 
-def dist_point_to_segment(p, a, b) -> float:
-    """Shortest distance from point p to the line segment a—b."""
+def closest_point_on_segment(p, a, b):
+    """The point of the line segment a—b nearest to point p."""
     ax, ay = a
     bx, by = b
-    px, py = p
     dx, dy = bx - ax, by - ay
     seg_len2 = dx * dx + dy * dy
     if seg_len2 <= 1e-12:                      # degenerate segment == point
-        return math.hypot(px - ax, py - ay)
-    t = _clamp01(((px - ax) * dx + (py - ay) * dy) / seg_len2)
-    cx, cy = ax + t * dx, ay + t * dy
-    return math.hypot(px - cx, py - cy)
+        return (ax, ay)
+    t = _clamp01(((p[0] - ax) * dx + (p[1] - ay) * dy) / seg_len2)
+    return (ax + t * dx, ay + t * dy)
+
+
+def dist_point_to_segment(p, a, b) -> float:
+    """Shortest distance from point p to the line segment a—b."""
+    cx, cy = closest_point_on_segment(p, a, b)
+    return math.hypot(p[0] - cx, p[1] - cy)
 
 
 def dist_point_to_rect(p, mn, mx) -> float:
@@ -97,6 +101,22 @@ def shape_clearance(shape, p) -> float:
         return max(0.0, dist_point_to_segment(p, a, b) - shape.get("thickness", 0.0) / 2.0)
     if kind == "rect":
         return dist_point_to_rect(p, shape["min"], shape["max"])
+    raise ValueError(f"unknown shape type: {kind!r}")
+
+
+def shape_closest_point(shape, p):
+    """The point of `shape` nearest to p: a point shape's centre, the nearest point of a wall's
+    centre-line, or of a rect (p itself if inside). Its direction from p is the direction of the
+    contact, whatever the shape's radius or thickness."""
+    kind = shape["type"]
+    if kind == "point":
+        return (shape["position"][0], shape["position"][1])
+    if kind == "segment":
+        (a, b) = shape["points"]
+        return closest_point_on_segment(p, a, b)
+    if kind == "rect":
+        mn, mx = shape["min"], shape["max"]
+        return (min(max(p[0], mn[0]), mx[0]), min(max(p[1], mn[1]), mx[1]))
     raise ValueError(f"unknown shape type: {kind!r}")
 
 
@@ -209,6 +229,31 @@ def ray_surface_distance(o, d, shape):
     c = ((a[0] + nx, a[1] + ny), (b[0] + nx, b[1] + ny),
          (b[0] - nx, b[1] - ny), (a[0] - nx, a[1] - ny))
     return _ray_polygon_distance(o, d, ((c[0], c[1]), (c[1], c[2]), (c[2], c[3]), (c[3], c[0])))
+
+
+def ray_disc_distance(o, d, c, r):
+    """Distance along ray o+d (d a unit vector) to the disc of radius r centred at c, or None if
+    the ray misses it; 0 if o is already inside it."""
+    fx, fy = o[0] - c[0], o[1] - c[1]
+    inside = fx * fx + fy * fy - r * r
+    if inside <= 0.0:
+        return 0.0
+    b = fx * d[0] + fy * d[1]
+    disc = b * b - inside
+    if disc < 0.0 or b > 0.0:              # misses, or the disc is behind the origin
+        return None
+    return -b - math.sqrt(disc)
+
+
+def ray_solid_distance(o, d, shape):
+    """Distance along ray o+d to the first solid surface of ANY shape, or None. Unlike
+    `ray_surface_distance` (the camera's sight-rays), a point shape counts too, as the disc its
+    radius gives it: this is a range sensor's beam, which must not slip past a small object the
+    robot could still drive into."""
+    if shape["type"] == "point":
+        r = shape.get("radius", 0.0)
+        return ray_disc_distance(o, d, shape["position"], r) if r > 0.0 else None
+    return ray_surface_distance(o, d, shape)
 
 
 def _ray_polygon_distance(o, d, edges):

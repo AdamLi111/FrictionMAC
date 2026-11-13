@@ -3,9 +3,9 @@
 A multi-agent robot system for the Misty II, built on the **Claude Agent SDK**. Two layers,
 two Python environments, talking over MCP:
 
-- **`robot_tools/`** — a standalone **MCP server** (16 tools) wrapping Misty's real
-  capabilities: movement, expression, speech, vision, and persistent world memory. Runs in
-  the robot env (`.venv`).
+- **`robot_tools/`** — a standalone **MCP server** (17 tools) wrapping Misty's real
+  capabilities: movement, distance and bump sensing, expression, speech, vision, and persistent
+  world memory. Runs in the robot env (`.venv`).
 - **`agent_runtime/`** — a **Director** agent that delegates to six domain-expert subagents,
   connected to the robot MCP server. Runs in the agent env (`.venv-agent`, Python ≥3.10, has
   `claude-agent-sdk`). Ships **five selectable architectures** (see below); pick one with
@@ -18,11 +18,12 @@ system at scale against the offline simulation instead of by hand. See
 Robot access has two modes, chosen by `MISTY_IP`: **real** (fails loudly if unreachable) or
 **stub** (`ROBOT_STUB=1`, or simply no `MISTY_IP` — fakes all robot calls for offline dev).
 
-## The 16 robot tools (`mcp__robot__*`)
+## The 17 robot tools (`mcp__robot__*`)
 
 | Group | Tools |
 |---|---|
 | Movement (DRIVE) | `move_forward`, `move_backward`, `turn_left`, `turn_right`, `stop` |
+| Sensing (no motor) | `read_distance_sensors` |
 | Expression (ARM_LEFT/ARM_RIGHT/HEAD/FACE/LED) | `move_arm`, `move_head`, `display_image`, `change_led`, `reset_pose` |
 | Speech | `speak(text, friction_type)` |
 | Vision | `capture_view`, `get_last_view` |
@@ -31,6 +32,18 @@ Robot access has two modes, chosen by `MISTY_IP`: **real** (fails loudly if unre
 - **Concurrency + locks:** server tool calls are offloaded to threads, and each physical
   motor resource has its own lock — calls on the *same* motor serialize (e.g. a 360° scan vs.
   driving), calls on *different* motors run concurrently. The two arms are independent locks.
+- **Distance + bump sensors** ([`sensors.py`](robot_tools/sensors.py)). Misty has three
+  time-of-flight range sensors on the front of the base and one on the back (one distance each,
+  10–1200 mm, no angle: the direction is which sensor it is), and four bump sensors (front/rear,
+  left/right). Their data only comes over Misty's WebSocket pub/sub, so the server keeps one
+  subscription open. `read_distance_sensors` returns the four distances plus any bumper pressed
+  now, and every movement result carries the distances from right after the move. A drive is
+  watched for bumps: on contact it is stopped and returns `ok: false` with a `bump` block (which
+  bumper, `after_ms` into the move, and `estimated_traveled_m`, the drive calibration run
+  backwards). A drive toward a bumper that is still pressed is refused rather than sent, since
+  Misty's hazard system would ignore it. The four downward (ledge) sensors are left to that
+  hazard system. Without sensor data (stub mode, or the stream is down) results say the sensors
+  are offline, so `ok: true` is never read as "nothing was touched".
 - **Vision** returns real image content the agent (a VLM) reasons over; no VLM runs in the
   server. `capture_view` shoots one frame of what's directly ahead (narrow ~45° FOV — to see
   elsewhere, turn first); `get_last_view` re-serves the last capture's frames with **no new
@@ -247,6 +260,12 @@ ROBOT_SIM_SCENE=office_kitchen AGENT_ARCH=v4 .venv-agent/bin/python -m scripts.h
   Walls and furniture are found by casting sight-rays across the FOV (every 0.5°), so they are
   seen at any range and reported at the distance of their nearest visible face; point objects
   (cups) are seen when their own bearing is in view and the line to them is clear.
+- **The distance and bump sensors are simulated from the same geometry.** Each range sensor
+  reads the nearest solid surface inside its cone, small objects included, out to 1.2 m. A
+  collision reports which bumper hit and after how long, and a bumper stays pressed while the
+  body touches something. Misty doesn't publish the cone's width or the angle of the two outer
+  front sensors, so the sim assumes a 25° cone and ±30°
+  ([`world_model.py`](robot_tools/sim/world_model.py)); check them on the robot.
 - Scenes are JSON in [`robot_tools/sim/scenes/`](robot_tools/sim/scenes/) (schema in
   [`sim/scene.py`](robot_tools/sim/scene.py)); `ROBOT_SIM_SCENE` takes a bundled name or a path.
 - **Visualize a scene** as a minimalist top-down SVG (walls, objects, robot heading + FOV, and

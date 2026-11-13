@@ -12,16 +12,58 @@ current heading; turning rotates in place. Collisions are detected against every
 geometry (there is no "obstacle" flag) by marching the robot disc along its path and stopping
 just before the first overlap; the object hit is recorded so the evaluator can decide whether
 that collision means success (the user asked to reach/bump it) or failure.
+
+The robot's distance and bump sensors (robot_tools/sensors.py) are answered from the same
+geometry: the four range sensors read the nearest solid surface in their cones, a collision
+names the bumper(s) that hit, and a bumper stays pressed while the body touches something.
 """
 import math
 
 from . import geometry as geo
+from ..sensors import BUMPERS, NO_READING, RANGE_SENSORS, TOF_MAX_RANGE_M
 
 DEFAULT_FOV_DEGREES = 45.0        # matches the real Misty's narrow camera
 DEFAULT_MAX_VIEW = 8.0            # metres
 ROBOT_RADIUS = 0.12              # collision disc for the robot body
 _STEP = 0.01                     # path-marching resolution for collision (metres)
 RAY_STEP_DEGREES = 0.5           # spacing of the sight-rays that find walls and furniture
+
+# Range sensors. Misty documents three on the front of the base and one on the back, out to
+# TOF_MAX_RANGE_M, but publishes neither the width of a sensor's cone nor the angle of the two
+# outer front ones. Those are this sim's assumptions: a 25° cone, typical of such sensors, with
+# the outer two turned 30° out. Bearings are relative to the heading (negative = left).
+TOF_BEARINGS = {"front_left": -30.0, "front_center": 0.0, "front_right": 30.0, "back": 180.0}
+TOF_CONE_DEGREES = 25.0
+TOF_RAY_STEP_DEGREES = 0.5
+# Bumpers. A contact within BUMPER_ARC_DEGREES of dead ahead (or astern) presses the bumper on
+# that side of the front (or back), and one within BOTH_BUMPERS_DEGREES of dead ahead/astern
+# presses both; a contact at the robot's flank presses neither. "Touching" means within
+# CONTACT_TOLERANCE of a surface, which covers where a collision leaves the robot (one _STEP
+# short of the overlap).
+BUMPER_ARC_DEGREES = 60.0
+BOTH_BUMPERS_DEGREES = 15.0
+CONTACT_TOLERANCE = 0.015
+
+
+def bumpers_at(bearing: float, end=None) -> list:
+    """The bumpers a contact at `bearing` (relative to the heading, negative = left) presses.
+    `end` ("front" or "rear") is set for a collision, where the drive's direction decides which
+    end hit; without it the contact has to lie within a bumper's arc."""
+    astern = 180.0 - abs(bearing)          # 0 = dead astern
+    if end is None:
+        if abs(bearing) <= BUMPER_ARC_DEGREES:
+            end = "front"
+        elif astern <= BUMPER_ARC_DEGREES:
+            end = "rear"
+        else:
+            return []
+    if end == "front":
+        if abs(bearing) <= BOTH_BUMPERS_DEGREES:
+            return ["front_left", "front_right"]
+        return ["front_left"] if bearing < 0 else ["front_right"]
+    if astern <= BOTH_BUMPERS_DEGREES:
+        return ["rear_left", "rear_right"]
+    return ["rear_left"] if bearing < 0 else ["rear_right"]
 
 
 class SimObject:
@@ -74,7 +116,8 @@ class SimWorld:
 
     def move(self, distance: float) -> dict:
         """Advance `distance` metres along the current heading (negative = backward), stopping
-        just before any collision. Returns {"collision": name|None, "message": str|None}."""
+        just before any collision. Returns {"collision": name|None, "message": str|None,
+        "moved": metres actually travelled, "bumpers": the bumpers a collision pressed}."""
         rad = math.radians(self.heading)
         sign = 1.0 if distance >= 0 else -1.0
         ux, uy = math.sin(rad) * sign, math.cos(rad) * sign
@@ -107,8 +150,12 @@ class SimWorld:
             }
             self._collision = col
             self.collisions.append(col)
-            return {"collision": hit.name, "message": col["message"]}
-        return {"collision": None, "message": None}
+            contact = geo.shape_closest_point(hit.shape, last_safe)
+            bumpers = bumpers_at(geo.relative_bearing(last_safe, self.heading, contact),
+                                 end="front" if sign > 0 else "rear")
+            return {"collision": hit.name, "message": col["message"], "moved": moved,
+                    "bumpers": bumpers}
+        return {"collision": None, "message": None, "moved": moved, "bumpers": []}
 
     def _first_overlap(self, p):
         """The first object whose solid geometry the robot disc at p overlaps, else None."""
@@ -121,6 +168,44 @@ class SimWorld:
         """Return and clear the most recent collision (so a tool call reports it once)."""
         col, self._collision = self._collision, None
         return col
+
+    # ------------------------------------------------------------------ proximity sensors
+    def range_readings(self) -> dict:
+        """What the four range sensors read from this pose: for each, the distance from the
+        robot's body to the nearest solid surface inside its cone (any object, a cup included:
+        anything the robot can bump into), or NO_READING when nothing lies within
+        TOF_MAX_RANGE_M. Rays start at the robot's centre, so a hit minus the body radius is the
+        gap in front of the bumper."""
+        pos = (self.robot_pos[0], self.robot_pos[1])
+        near = [o for o in self.objects
+                if o.clearance(pos) <= self.robot_radius + TOF_MAX_RANGE_M]
+        n = int(round(TOF_CONE_DEGREES / TOF_RAY_STEP_DEGREES)) + 1
+        out = {}
+        for sensor in RANGE_SENSORS:
+            first = None
+            for i in range(n):
+                bearing = TOF_BEARINGS[sensor] - TOF_CONE_DEGREES / 2.0 + TOF_CONE_DEGREES * i / (n - 1)
+                rad = math.radians(self.heading + bearing)
+                ray = (math.sin(rad), math.cos(rad))
+                for obj in near:
+                    t = geo.ray_solid_distance(pos, ray, obj.shape)
+                    if t is not None and (first is None or t < first):
+                        first = t
+            gap = None if first is None else max(0.0, first - self.robot_radius)
+            out[sensor] = round(gap, 3) if gap is not None and gap <= TOF_MAX_RANGE_M else NO_READING
+        return out
+
+    def bumpers_pressed(self) -> list:
+        """The bumpers pressed against something right now: those facing any object the body is
+        touching. A collision leaves the bumper that hit pressed; backing off releases it, and so
+        does turning until the contact is at the robot's flank."""
+        pos = (self.robot_pos[0], self.robot_pos[1])
+        pressed = set()
+        for obj in self.objects:
+            if obj.clearance(pos) < self.robot_radius + CONTACT_TOLERANCE:
+                contact = geo.shape_closest_point(obj.shape, pos)
+                pressed.update(bumpers_at(geo.relative_bearing(pos, self.heading, contact)))
+        return [b for b in BUMPERS if b in pressed]
 
     # ------------------------------------------------------------------ perception
     def _visible_samples(self, obj, rays=None):

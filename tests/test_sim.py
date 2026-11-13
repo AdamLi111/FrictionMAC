@@ -5,6 +5,7 @@ Covers the ground-truth physics (wall-aware collision, narrow FOV, wall occlusio
 tool-layer wiring (capture_view returns a text POV; movement surfaces collisions) in sim mode.
 """
 import json
+import math
 import os
 
 import pytest
@@ -139,6 +140,67 @@ def test_a_one_object_visibility_check_agrees_with_the_full_view():
                 assert w._visible_samples(obj) == w._visible_samples(obj, rays), (pos, heading)
 
 
+# ------------------------------------------------------------- distance + bump sensors
+def test_range_sensors_measure_the_gap_from_the_body_to_a_wall_ahead():
+    w = SimWorld(_scene(objects=[_seg("wall", [-5, 1.0], [5, 1.0])]))
+    r = w.range_readings()
+    # the wall's face is at 0.95 and the body's radius 0.12: the centre sensor reads the gap
+    assert r["front_center"] == pytest.approx(0.83, abs=0.005)
+    # the outer sensors look 30° out, so their nearest ray (17.5° off) meets the wall farther on
+    assert r["front_left"] == pytest.approx(r["front_right"])
+    assert r["front_left"] == pytest.approx(0.95 / math.cos(math.radians(17.5)) - 0.12, abs=0.005)
+    assert r["back"] == "no reading"
+
+
+def test_range_sensors_read_nothing_beyond_their_reach():
+    w = SimWorld(_scene(objects=[_seg("wall", [-5, 3.0], [5, 3.0])]))
+    assert set(w.range_readings().values()) == {"no reading"}
+
+
+def test_range_sensors_see_small_objects_the_robot_could_drive_into():
+    cup = {"name": "cup", "shape": {"type": "point", "position": [0.0, 0.5], "radius": 0.05}}
+    w = SimWorld(_scene(objects=[cup]))
+    assert w.range_readings()["front_center"] == pytest.approx(0.5 - 0.05 - 0.12, abs=0.005)
+
+
+def test_the_back_sensor_looks_behind():
+    w = SimWorld(_scene(objects=[_seg("wall", [-5, -0.6], [5, -0.6])]))
+    r = w.range_readings()
+    assert r["back"] == pytest.approx(0.6 - 0.05 - 0.12, abs=0.005)
+    assert r["front_center"] == "no reading"
+
+
+def test_a_head_on_collision_presses_both_front_bumpers_and_says_how_far_it_got():
+    w = SimWorld(_scene(objects=[_seg("wall", [-5, 1.0], [5, 1.0])]))
+    res = w.move(2.0)
+    assert res["collision"] == "wall"
+    assert res["bumpers"] == ["front_left", "front_right"]
+    assert res["moved"] == pytest.approx(0.83, abs=0.011)    # stopped one step short of the face
+    assert w.bumpers_pressed() == ["front_left", "front_right"]
+
+
+def test_an_off_centre_hit_presses_the_bumper_on_that_side():
+    cup = {"name": "cup", "shape": {"type": "point", "position": [-0.15, 1.0], "radius": 0.06}}
+    res = SimWorld(_scene(objects=[cup])).move(2.0)
+    assert res["collision"] == "cup" and res["bumpers"] == ["front_left"]
+
+
+def test_reversing_into_a_wall_presses_the_rear_bumpers():
+    res = SimWorld(_scene(objects=[_seg("wall", [-5, -0.5], [5, -0.5])])).move(-1.0)
+    assert res["collision"] == "wall" and res["bumpers"] == ["rear_left", "rear_right"]
+
+
+def test_backing_off_or_turning_away_releases_the_bumper():
+    w = SimWorld(_scene(objects=[_seg("wall", [-5, 1.0], [5, 1.0])]))
+    w.move(2.0)
+    w.turn(90)                                   # the wall is now at the robot's flank
+    assert w.bumpers_pressed() == []
+    w.turn(-90)
+    assert w.bumpers_pressed() == ["front_left", "front_right"]
+    w.move(-0.2)
+    assert w.bumpers_pressed() == []
+
+
 def test_turn_sign_convention():
     w = SimWorld(_scene())
     w.turn(-90)                 # left = counter-clockwise
@@ -155,6 +217,8 @@ def sim_env(tmp_path, monkeypatch):
     monkeypatch.setenv("ROBOT_SIM_SCENE", str(scene_file))
     monkeypatch.setenv("WORLD_STATE_PATH", str(tmp_path / "ws.json"))
     monkeypatch.setenv("TOOL_LOG_PATH", str(tmp_path / "tl.jsonl"))
+    # Not the default data/sim_state.json, which a live session's visualizer reads.
+    monkeypatch.setenv("SIM_STATE_PATH", str(tmp_path / "sim_state.json"))
     from robot_tools import runtime
     runtime.reset()
     yield
@@ -175,6 +239,24 @@ def test_move_forward_reports_collision(sim_env):
     assert r["ok"] is False and r["collision"] == "cup"
 
 
+def test_a_sim_bump_reads_like_the_real_robots(sim_env):
+    """The same result shape the physical robot's bump sensors produce, so the agents' steering
+    describes one interface."""
+    from robot_tools import tools
+    r = tools.move_forward(5.0)               # cup centred in the path, 2 m ahead
+    assert r["bump"]["bumpers"] == ["front_left", "front_right"]
+    assert 1.5 < r["bump"]["estimated_traveled_m"] < 2.0
+    assert r["distances_m"]["front_center"] < 0.02            # right up against it
+    assert "sensors" not in r                                 # the sim always has sensor data
+
+    # pressed against the cup, the robot won't drive into it again, but it can back away
+    again = tools.move_forward(1.0)
+    assert again["ok"] is False and again["bump"]["already_pressed"] is True
+    assert tools.read_distance_sensors()["bumpers_pressed"] == ["front_left", "front_right"]
+    assert tools.move_backward(0.3)["ok"] is True
+    assert tools.read_distance_sensors()["bumpers_pressed"] == []
+
+
 def _log_rows(tmp_path):
     with open(tmp_path / "tl.jsonl", encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
@@ -193,8 +275,11 @@ def test_tool_log_records_the_pose_every_call_happened_at(sim_env, tmp_path):
     assert rows["turn_right"]["pose"][2] == 90.0                 # heading after the turn
     assert rows["move_forward"]["pose"][0] == pytest.approx(0.5, abs=0.01)
     assert rows["update_world"]["pose"] == rows["move_forward"]["pose"]   # didn't move between
-    # the tool's own return value is unchanged — the agent is told nothing new
-    assert set(tools.turn_right(10).keys()) == {"ok", "duration_ms"}
+    # the agent is told nothing of the truth: no pose in what the tool returns, only what the
+    # robot's own sensors would report
+    returned = tools.turn_right(10)
+    assert "pose" not in returned
+    assert set(returned) == {"ok", "duration_ms", "distances_m"}
 
 
 def test_capture_view_log_records_what_was_actually_visible(sim_env, tmp_path):

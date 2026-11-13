@@ -51,7 +51,7 @@ def build_agents_v2() -> dict:
         # ---- Action-Space cluster (manager: action-manager) ----
         "navigation": expert("navigation", "v2/navigation.md",
             _rt("move_forward", "move_backward", "turn_left", "turn_right", "stop",
-                "capture_view")),
+                "capture_view", "read_distance_sensors")),
         "expression": expert("expression", "v2/expression.md",
             _rt("move_arm", "move_head", "display_image", "change_led", "reset_pose")),
         # ---- Dialogue-Management cluster (manager: dialogue-manager) ----
@@ -157,7 +157,7 @@ def build_agents() -> dict:
                          "INFEASIBLE."),
             prompt=config.read_steering("v1/navigation.md"),
             tools=_rt("move_forward", "move_backward", "turn_left", "turn_right", "stop",
-                      "capture_view"),
+                      "capture_view", "read_distance_sensors"),
             mcpServers=[config.ROBOT_SERVER],
             model="inherit",
         ),
