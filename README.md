@@ -32,22 +32,31 @@ Robot access has two modes, chosen by `MISTY_IP`: **real** (fails loudly if unre
 - **Concurrency + locks:** server tool calls are offloaded to threads, and each physical
   motor resource has its own lock — calls on the *same* motor serialize (e.g. a 360° scan vs.
   driving), calls on *different* motors run concurrently. The two arms are independent locks.
-- **Distance + bump sensors** ([`sensors.py`](robot_tools/sensors.py)). Misty has three
+- **Distance, ledge + bump sensors** ([`sensors.py`](robot_tools/sensors.py)). Misty has three
   time-of-flight range sensors on the front of the base and one on the back (one distance each,
-  10–1200 mm, no angle: the direction is which sensor it is), and four bump sensors (front/rear,
-  left/right). Their data only comes over Misty's WebSocket pub/sub, so the server keeps one
-  subscription open. `read_distance_sensors` returns the four distances plus any bumper pressed
-  now, and every movement result carries the distances from right after the move. A drive is
+  10–1200 mm, no angle: the direction is which sensor it is), four downward ledge sensors at the
+  base's corners, and four bump sensors (front/rear, left/right). Their data only comes over
+  Misty's WebSocket pub/sub, so the server keeps one subscription open. `read_distance_sensors`
+  returns the four distances, any bumper pressed now, and any corner whose ledge sensor sees a
+  drop; every movement result carries the distances from right after the move. A drive is
   watched for bumps: on contact it is stopped and returns `ok: false` with a `bump` block (which
   bumper, `after_ms` into the move, and `estimated_traveled_m`, the drive calibration run
   backwards). A drive toward a bumper that is still pressed is refused rather than sent, since
-  Misty's hazard system would ignore it. A straight move also stops itself near an obstacle:
-  `move_forward`/`move_backward` take `stop_within` (default 0.15 m), and when a distance sensor
-  facing the way it drives reads closer than that, the robot stops and returns an `obstacle`
-  block instead (the agent sets the condition; the code checks every reading against it as it
-  arrives, a few times a second). A move that would start inside `stop_within` isn't sent. The four downward (ledge) sensors are left to that
-  hazard system. Without sensor data (stub mode, or the stream is down) results say the sensors
-  are offline, so `ok: true` is never read as "nothing was touched".
+  Misty's hazard system would ignore it.
+  - **Obstacles.** A straight move also stops itself near an obstacle: `move_forward` and
+    `move_backward` take `stop_within` (default 0.15 m). When the sensor looking straight along
+    the path reads closer than that, the robot stops and returns an `obstacle` block. The agent
+    sets the condition; the code checks every reading against it as it arrives, a few times a
+    second. The two angled front sensors mostly see what is beside the path, so they use at most
+    0.06 m: a robot passing close to a wall or through a narrow doorway isn't stopped. A move
+    that would start inside a limit isn't sent.
+  - **Ledges.** A corner sees a drop when Misty's own hazard system flags its ledge sensor, when
+    it reads over 0.06 m (Misty's default), or when it measures no floor at all. Any move stops
+    at a drop under a corner it heads toward (the front pair going forward, the rear pair going
+    backward, all four for a turn) and returns a `ledge` block. A move toward a drop already seen
+    isn't sent. Without this, a move Misty halted at a ledge would look like it had finished.
+  - **No data.** Without sensor data (stub mode, or the stream is down) results say the sensors
+    are offline, so `ok: true` is never read as "nothing was touched".
 - **Vision** returns real image content the agent (a VLM) reasons over; no VLM runs in the
   server. `capture_view` shoots one frame of what's directly ahead (narrow ~45° FOV — to see
   elsewhere, turn first); `get_last_view` re-serves the last capture's frames with **no new
@@ -244,6 +253,27 @@ Every session also writes `data/hw_session_<ts>_story.txt` — the same events a
 per-agent narrative of who thought what (see
 [Reading what the agents were thinking](#reading-what-the-agents-were-thinking)).
 
+### Drive by hand, no agents (robot testing)
+
+[`scripts/drive_console.py`](scripts/drive_console.py) takes typed commands like
+`move forward 1 meter`, `back 30 cm`, `turn left 90` or `forward 1 stop within 0` and runs them
+through the same robot tools the agents use, so bumps and `stop_within` stop a move exactly as
+they would for an agent. While it runs, a page on localhost shows every sensor live: the four
+distance beams, the four ledge (downward) sensors, the bumpers, Misty's own hazard
+notifications, a 20-second distance chart, the move in progress, and a STOP button. It runs in
+the robot env and needs no API key:
+
+```bash
+.venv/bin/python -m scripts.drive_console                      # robot (172.20.10.2 or $MISTY_IP)
+.venv/bin/python -m scripts.drive_console --sim office_kitchen # the simulator instead
+# then open http://127.0.0.1:8765, or follow the stream in another terminal:
+curl -N http://127.0.0.1:8765/live.txt
+```
+
+Type `help` for every command. Ctrl-C during a move stops the robot. Every sensor message goes to
+`data/drive_console_<ts>_sensors.jsonl`, and every result to `..._tools.jsonl`. Close
+`hw_console` first: both subscribe to Misty's sensors under the same names.
+
 ## Simulation (offline world model)
 
 A ground-truth 2-D world in [`robot_tools/sim/`](robot_tools/sim/) stands in for the physical
@@ -271,7 +301,9 @@ ROBOT_SIM_SCENE=office_kitchen AGENT_ARCH=v4 .venv-agent/bin/python -m scripts.h
   movement code, the bump stop and the `stop_within` stop are the robot's code. Each range sensor
   reports about every 0.32 s (as measured on Misty), staggered, with a few millimetres of noise:
   the gap to the nearest solid surface inside its cone (small objects included) out to 1.2 m,
-  else status 102, "no reading". Each of the four bumpers sends a message on contact and on
+  else status 102, "no reading". The four ledge sensors report about seven times a second,
+  reading the floor 2–4 cm below each corner; the sim world has no ledges yet, so they never see
+  a drop. Each of the four bumpers sends a message on contact and on
   release, and stays pressed while the body touches something on its side. Simulated time
   passes only while a tool waits on the sensors, so a 4 s drive takes milliseconds. Misty
   doesn't publish the cone's width or the angle of the two outer front sensors, so the sim
@@ -460,6 +492,7 @@ startup. Note that launching the MCP server by hand (`python -m robot_tools.serv
 ```bash
 .venv/bin/python -m pytest              # robot-layer + task-list tests (no hardware, no agent)
 .venv/bin/python -m scripts.sensor_probe   # real robot: do the distance + bump sensors report? (nothing moves)
+.venv/bin/python -m scripts.drive_console  # real robot: drive by typed commands, watch sensors live
 .venv-agent/bin/python -m scripts.step4_test on   # real-API friction test (stub robot)
 .venv-agent/bin/python -m evaluation.run_tasks --validate   # task list vs. the scenes
 ```

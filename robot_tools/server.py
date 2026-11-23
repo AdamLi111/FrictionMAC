@@ -87,26 +87,33 @@ def _frame_content(b64: str, label: str):
 # ---- movement (DRIVE) ----
 # Drive/turn calls hold one shared DRIVE lock, so two of them never overlap; a call on a
 # different motor (arm/head/face/LED) runs concurrently. Every movement result also carries the
-# distance sensors' readings after the move, and a "bump" or "obstacle" block if one stopped it.
+# distance sensors' readings after the move, and a "ledge", "bump" or "obstacle" block if one
+# stopped it.
 @mcp.tool()
 async def move_forward(distance: float = 1.0,
                        stop_within: float = tools.DEFAULT_STOP_WITHIN_M) -> dict:
-    """Drive straight forward `distance` meters, stopping early if the three front distance
-    sensors see something closer than `stop_within` meters (default 0.15; 0 turns this off, for
-    when you mean to touch what's ahead).
+    """Drive straight forward `distance` meters, stopping early if the front-centre distance
+    sensor sees something closer than `stop_within` meters (default 0.15; 0 turns this off, for
+    when you mean to touch what's ahead). The two angled front sensors mostly see what is beside
+    your path, so they stop the robot only when something is within 0.06 m of them.
 
     Returns {"ok": true, "duration_ms": N, "distances_m": {...}} when the move completed;
     `distances_m` is the distance-sensor reading taken right after the move (the same thing
     read_distance_sensors returns).
 
     `ok: false` means the move did not complete as asked, and which key is present says why:
-      - "obstacle": a front distance sensor read closer than `stop_within`, so the robot stopped
-        early. It names the `sensor`, its reading (`distance_m`), `after_ms` (how long into the
-        move) and `estimated_traveled_m` (about how far the robot got, estimated from the drive's
-        timing). The sensors report a few times a second, so the robot may coast a few
-        centimetres closer than that reading before it stops: `distances_m` says where it ended
-        up. With `already_within: true` the robot did not move at all, because something was
-        already that close.
+      - "ledge": a ledge sensor under a front corner saw a drop (no floor: stairs, a table
+        edge), so the robot stopped before going over it. It names the corner(s) (`ledges`),
+        `after_ms` and `estimated_traveled_m`. Never drive toward a drop; back away from it.
+        With `already_detected: true` the robot did not move at all, because a drop was already
+        under a front corner.
+      - "obstacle": a distance sensor read inside its limit, so the robot stopped early. It
+        names the `sensor`, its reading (`distance_m`), the `limit_m` it crossed, `after_ms`
+        (how long into the move) and `estimated_traveled_m` (about how far the robot got,
+        estimated from the drive's timing). The sensors report a few times a second, so the
+        robot may coast a few centimetres closer than that reading before it stops:
+        `distances_m` says where it ended up. With `already_within: true` the robot did not
+        move at all, because something was already that close.
       - "bump": a bumper was pressed, so the robot stopped early. It names the bumper(s) and
         gives `after_ms` and `estimated_traveled_m` as above. With `already_pressed: true` the
         robot did not move at all: a bumper on that end was already pressed against something,
@@ -116,7 +123,8 @@ async def move_forward(distance: float = 1.0,
 
     `ok: true` means nothing stopped the move. It does NOT mean "I arrived": confirm progress by
     looking (capture_view). If a "sensors" key says offline, there was no sensor data, so
-    `ok: true` then says nothing about whether anything was near or touched."""
+    `ok: true` then says nothing about whether anything was near or touched. A
+    `ledges_detected` key lists any corner that sees a drop right now."""
     return await _off(tools.move_forward, distance, stop_within)
 
 
@@ -124,9 +132,10 @@ async def move_forward(distance: float = 1.0,
 async def move_backward(distance: float = 1.0,
                         stop_within: float = tools.DEFAULT_STOP_WITHIN_M) -> dict:
     """Drive straight backward `distance` meters, stopping early if the `back` distance sensor
-    sees something closer than `stop_within` meters (default 0.15; 0 turns this off). Same
-    return shape as move_forward. The rear bumpers and the `back` distance sensor cover this
-    direction; the forward-facing camera never sees behind the robot."""
+    sees something closer than `stop_within` meters (default 0.15; 0 turns this off), or a ledge
+    sensor under a rear corner sees a drop. Same return shape as move_forward. The rear bumpers,
+    the rear ledge sensors and the `back` distance sensor cover this direction; the
+    forward-facing camera never sees behind the robot."""
     return await _off(tools.move_backward, distance, stop_within)
 
 
@@ -134,7 +143,9 @@ async def move_backward(distance: float = 1.0,
 async def turn_left(degrees: float) -> dict:
     """Rotate left (counter-clockwise) `degrees` degrees in place. Returns {"ok": true,
     "duration_ms": N, "distances_m": {...}}: the distance readings at the new heading. A bumper
-    pressed mid-turn stops it early (ok: false with a "bump" block, as for move_forward)."""
+    pressed mid-turn, or a drop under any corner, stops it early (ok: false with a "bump" or
+    "ledge" block, as for move_forward); while a corner is over a drop the robot won't turn at
+    all -- drive straight away from the drop first."""
     return await _off(tools.turn_left, degrees)
 
 
@@ -162,7 +173,9 @@ async def stop() -> dict:
     f"\"{sensors.NO_READING}\" means the sensor measured nothing reliable, usually because "
     f"nothing is within range (likely open space, but not proof of it); \"{sensors.UNKNOWN}\" "
     f"means no recent data from that sensor. Also returns `bumpers_pressed`: which of "
-    f"{', '.join(sensors.BUMPERS)} are pressed against something right now."))
+    f"{', '.join(sensors.BUMPERS)} are pressed against something right now; and "
+    f"`ledges_detected`: which corners' downward ledge sensors see a drop (no floor), where the "
+    f"robot must not drive."))
 async def read_distance_sensors() -> dict:
     return await _off(tools.read_distance_sensors)
 

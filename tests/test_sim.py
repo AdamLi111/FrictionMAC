@@ -361,7 +361,7 @@ def test_the_default_stop_keeps_the_robot_off_what_its_sensors_see(near_wall_env
     r = tools.move_forward(1.0)
     assert r["ok"] is False and "bump" not in r
     assert r["obstacle"]["sensor"] in ("front_left", "front_center", "front_right")
-    assert r["obstacle"]["distance_m"] < 0.15 and r["obstacle"]["stop_within"] == 0.15
+    assert r["obstacle"]["distance_m"] < 0.15 and r["obstacle"]["limit_m"] == 0.15
     assert 0.0 < _gap_ahead() < 0.15                       # stopped short, never touched
     assert runtime.get_sim_world().collisions == []
     # what the result reports is where the robot ended up, not the reading that stopped it
@@ -398,11 +398,16 @@ def test_each_range_sensor_reports_about_three_times_a_second(sim_env):
     feed = monitor.feed
     monitor.feed = lambda raw: (fed.append(json.loads(raw)), feed(raw))
     monitor.idle(3.16)                                      # ten reading periods
-    readings = [m["message"] for m in fed if "distanceInMeters" in m["message"]]
+    readings = [m["message"] for m in fed if m["message"].get("type") == "Range"]
     per_sensor = Counter(m["sensorId"] for m in readings)
     assert set(per_sensor) == {"toffl", "toffc", "toffr", "tofr"}
     assert all(9 <= n <= 11 for n in per_sensor.values()), per_sensor
     assert {m["status"] for m in readings} == {102}
+    # and the four ledge sensors, about seven times a second, reading the floor
+    ledges = Counter(m["message"]["sensorId"] for m in fed if m["message"].get("type") == "Edge")
+    assert set(ledges) == {"tofdfl", "tofdfr", "tofdrl", "tofdrr"}
+    assert all(20 <= n <= 24 for n in ledges.values()), ledges
+    assert monitor.drops() == [] and set(monitor.ledges().values()) == {"floor"}
 
 
 def test_turns_take_the_exact_angle_asked(sim_env):
@@ -424,4 +429,29 @@ def test_simulated_time_costs_no_real_time(sim_env):
     simulated = runtime.get_sensors().now() - start_sim
     assert simulated >= (runtime.calc_drive_time(1.5) + runtime.calc_turn_time(180)) / 1000
     assert time.perf_counter() - start < 1.0
+
+
+def test_a_narrow_passage_neither_stops_nor_traps_the_robot(tmp_path, monkeypatch):
+    """Walls 2 cm from each side of the body, parallel to the path: the angled front sensors read
+    them under 0.15 m, but they only stop the robot within 0.06 m, so it drives straight through."""
+    walls = [{"name": f"{side} wall", "shape": {"type": "segment",
+                                                "points": [[x, -0.5], [x, 3.0]],
+                                                "thickness": 0.1}}
+             for side, x in (("left", -0.19), ("right", 0.19))]
+    scene_file = tmp_path / "scene.json"
+    scene_file.write_text(json.dumps(_scene(objects=walls)))
+    monkeypatch.setenv("ROBOT_SIM_SCENE", str(scene_file))
+    monkeypatch.setenv("WORLD_STATE_PATH", str(tmp_path / "ws.json"))
+    monkeypatch.setenv("TOOL_LOG_PATH", str(tmp_path / "tl.jsonl"))
+    monkeypatch.setenv("SIM_STATE_PATH", str(tmp_path / "sim_state.json"))
+    from robot_tools import runtime, tools
+    runtime.reset()
+    try:
+        assert tools.read_distance_sensors()["distances_m"]["front_left"] < 0.15
+        assert tools.move_forward(1.0)["ok"] is True
+        assert tools.move_forward(1.0)["ok"] is True
+        assert runtime.get_sim_world().robot_pos[1] == pytest.approx(2.0)
+        assert runtime.get_sim_world().collisions == []
+    finally:
+        runtime.reset()
 

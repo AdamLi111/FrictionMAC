@@ -245,6 +245,12 @@ def _tof(sensor_id, metres, status=0):
         "sensorId": sensor_id, "status": status, "type": "Range"}})
 
 
+def _edge(sensor_id, metres, status=0, hazard=False):
+    return json.dumps({"eventName": f"ponder_edge_{sensor_id}", "message": {
+        "created": "2026-11-12T20:00:00.0000000Z", "distanceInMeters": metres,
+        "inHazard": hazard, "sensorId": sensor_id, "status": status, "type": "Edge"}})
+
+
 def _bump(sensor_id, contacted):
     return json.dumps({"eventName": "ponder_bump", "message": {
         "created": "2026-11-12T20:00:01.2500000Z", "isContacted": contacted,
@@ -328,12 +334,12 @@ def test_without_sensor_data_a_move_says_the_sensors_are_offline(stub_env):
     assert set(r["distances_m"].values()) == {sensors.UNKNOWN}
 
 
-def test_each_range_sensor_gets_its_own_subscription():
+def test_each_range_and_ledge_sensor_gets_its_own_subscription():
     from robot_tools import sensors
     subs = sensors.subscription_messages()
     tof = [s for s in subs if s["Type"] == "TimeOfFlight"]
     assert sorted(s["EventConditions"][0]["Value"] for s in tof) == [
-        "toffc", "toffl", "toffr", "tofr"]
+        "tofdfl", "tofdfr", "tofdrl", "tofdrr", "toffc", "toffl", "toffr", "tofr"]
     assert [s["Type"] for s in subs].count("BumpSensor") == 1
     assert len({s["EventName"] for s in subs}) == len(subs)
 
@@ -389,7 +395,7 @@ def test_a_move_stops_when_a_sensor_facing_its_way_reads_inside_stop_within(moni
     robot.drive_time = drive_toward_a_box
     r = tools.move_forward(2.0)                       # the default stop_within, 0.15 m
     assert r["ok"] is False and "bump" not in r
-    assert r["obstacle"] == {"sensor": "front_center", "distance_m": 0.12, "stop_within": 0.15,
+    assert r["obstacle"] == {"sensor": "front_center", "distance_m": 0.12, "limit_m": 0.15,
                              "after_ms": 800,
                              "estimated_traveled_m": runtime.calc_drive_progress(800, 2.0)}
     assert robot.calls_of("stop")                     # stopped at the reading
@@ -416,17 +422,112 @@ def test_stop_within_watches_only_trusted_readings_the_way_the_robot_drives(moni
 
 
 def test_stop_reason_puts_a_bump_first_and_ignores_readings_from_before_the_move(monitor):
+    limits = {sensor: 0.15 for sensor in _FRONT}
     monitor.feed(_tof("toffc", 0.05))                     # before the move began
     monitor._clock.t += 1
     since = monitor.now()
-    assert monitor.stop_reason(since, _FRONT, 0.15) is None
+    assert monitor.stop_reason(since, limits) is None
     monitor._clock.t += 0.3
     monitor.feed(_tof("toffl", 0.14))
     monitor.feed(_tof("toffr", 0.10))
-    assert monitor.stop_reason(since, _FRONT, 0.15)["obstacle"]["sensor"] == "front_right"
-    assert monitor.stop_reason(since, _FRONT, 0.0) is None          # 0: no distance check
+    reason = monitor.stop_reason(since, limits)["obstacle"]
+    assert reason["sensor"] == "front_right" and reason["limit_m"] == 0.15     # most inside
+    assert monitor.stop_reason(since, {}) is None                   # no limits: no distance check
+    monitor.feed(_edge("tofdfl", 0.2))                    # a drop, but not on a watched corner
+    assert "obstacle" in monitor.stop_reason(since, limits, ledges=("rear_left",))
+    assert "ledge" in monitor.stop_reason(since, limits, ledges=("front_left",))
     monitor.feed(_bump("bfl", True))
-    assert "bump" in monitor.stop_reason(since, _FRONT, 0.15)
+    assert "bump" in monitor.stop_reason(since, limits, ledges=("front_left",))
+
+
+# ------------------------------------------ the angled front sensors: walls beside the path
+def test_the_angled_front_sensors_stop_a_move_only_within_6_cm(monitor):
+    """They mostly see what is beside the robot's path (a wall it passes), so only the centre
+    sensor uses stop_within; a narrow passage doesn't stop the robot or keep it from starting."""
+    from robot_tools import runtime, tools
+    robot = runtime.get_robot()
+    monitor.feed(_tof("toffl", 0.10))                     # a wall 10 cm off the left sensor
+    send = robot.drive_time
+    readings = iter([0.09, 0.05, 0.05, 0.05])
+
+    def drive_alongside(*args, **kwargs):
+        send(*args, **kwargs)
+        monitor._clock.t += 0.5
+        monitor.feed(_tof("toffl", next(readings)))
+
+    robot.drive_time = drive_alongside
+    assert tools.move_forward(1.0)["ok"] is True          # 9 cm: fine, it isn't in the path
+    r = tools.move_forward(1.0)                           # 5 cm: about to scrape the corner
+    assert r["obstacle"]["sensor"] == "front_left" and r["obstacle"]["limit_m"] == 0.06
+    assert tools.move_forward(1.0)["obstacle"]["already_within"] is True    # won't start there
+    assert tools.move_forward(1.0, stop_within=0.03)["ok"] is True   # a smaller limit for all
+    assert tools.move_forward(1.0, stop_within=0)["ok"] is True
+
+
+# ------------------------------------------ ledges: a drop under a corner
+def test_a_drop_under_a_front_corner_stops_a_forward_move(monitor):
+    from robot_tools import runtime, tools
+    robot = runtime.get_robot()
+    monitor.feed(_edge("tofdfl", 0.027))                  # floor under every corner
+    send = robot.drive_time
+
+    def drive_to_the_edge(*args, **kwargs):               # 1 s in, the front-left sees no floor
+        send(*args, **kwargs)
+        monitor._clock.t += 1.0
+        monitor.feed(_edge("tofdfl", 0.02, status=104))
+
+    robot.drive_time = drive_to_the_edge
+    r = tools.move_forward(2.0)
+    assert r["ok"] is False and r["ledge"]["ledges"] == ["front_left"]
+    assert r["ledge"]["after_ms"] == 1000 and "drop" in r["message"]
+    assert robot.calls_of("stop")
+    assert r["ledges_detected"] == ["front_left"]
+
+
+def test_a_move_toward_a_drop_is_not_sent_but_moving_away_is(monitor):
+    from robot_tools import runtime, tools
+    robot = runtime.get_robot()
+    monitor.feed(_edge("tofdfr", 0.09))                   # farther than 6 cm: a drop
+    r = tools.move_forward(1.0)
+    assert r["ledge"]["already_detected"] is True and r["ledge"]["ledges"] == ["front_right"]
+    assert tools.turn_left(90)["ledge"]["already_detected"] is True     # a turn swings it over
+    assert robot.calls_of("drive_time") == []
+    assert tools.move_backward(0.2)["ok"] is True         # backing away is allowed
+    assert tools.read_distance_sensors()["ledges_detected"] == ["front_right"]
+
+
+def test_mistys_own_hazard_flag_counts_as_a_drop(monitor):
+    from robot_tools import sensors
+    monitor.feed(_edge("tofdrl", 0.03, hazard=True))
+    monitor.feed(_edge("tofdrr", 0.03))
+    assert monitor.ledges() == {"front_left": sensors.UNKNOWN, "front_right": sensors.UNKNOWN,
+                                "rear_left": sensors.DROP, "rear_right": sensors.FLOOR}
+
+
+def test_listeners_see_every_message_and_extra_subscriptions_ride_along(monitor):
+    """For watching the raw stream (the drive console): a listener gets each message, the ones
+    the monitor itself ignores included, and extra subscriptions are sent on every (re)connect
+    after the monitor's own."""
+    from robot_tools import sensors
+    seen = []
+    monitor.add_listener(seen.append)
+    monitor.add_listener(lambda message: 1 / 0)          # a broken listener changes nothing
+    monitor.feed(_tof("tofdfl", 0.02))                    # a ledge sensor: not filed, but seen
+    monitor.feed(_tof("toffc", 0.4))
+    assert [m["message"]["sensorId"] for m in seen] == ["tofdfl", "toffc"]
+    assert monitor.distances()["front_center"] == 0.4
+
+    extra = {"Operation": "subscribe", "Type": "HazardNotification", "DebounceMs": 0,
+             "EventName": "watch_hazard", "Message": ""}
+    monitor.add_subscriptions([extra])
+    sent = []
+
+    class _App:
+        def send(self, text):
+            sent.append(json.loads(text))
+
+    monitor._on_open(_App())
+    assert sent == sensors.subscription_messages() + [extra]
 
 
 # ------------------------------------------ Test 9: the MCP server itself loads

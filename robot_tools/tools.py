@@ -11,8 +11,10 @@ Design rules (see UNDERSTANDING.md section 7):
   - Every movement result reports the distance + bump sensors (sensors.py): the distances right
     after the move, and a "bump" block if a bumper was pressed during it.
   - A straight move also stops itself near an obstacle: the agent sets `stop_within` (default
-    0.15 m), and the drive watches every reading from the sensors facing its way against it,
-    returning an "obstacle" block when one comes closer.
+    0.15 m) for the sensor looking along the path (the angled front sensors use at most 0.06 m),
+    and the drive checks every reading against it as it arrives, returning an "obstacle" block.
+  - Any move stops at a drop: the ledge sensors on the end it heads toward (all four for a turn)
+    end it with a "ledge" block, and a move toward a drop already seen isn't sent.
   - The same movement code drives the real robot and the simulated one (sim/robot.py): both
     stream their sensors into a SensorMonitor, and the simulation's runs on simulated time.
   - Vision returns raw base64 frames; no VLM runs here (the agent reasons over the images).
@@ -82,15 +84,27 @@ def _tool(redact=None):
 _SETTLE_S = 0.4   # after a move: wait this long, at most, for every range sensor to report
 _COAST_S = 0.15   # after an early stop: the robot is still coasting to a halt for about this long
 DEFAULT_STOP_WITHIN_M = 0.15
-# The range sensors that look the way a straight drive goes.
-_WATCH = {"forward": ("front_left", "front_center", "front_right"), "backward": ("back",)}
+# The two angled front sensors mostly see what is BESIDE the robot's path (a wall it is passing,
+# a door frame it will clear), so they stop a move only when something is closer than this:
+# closer than the robot could pass by without touching it. Only the sensor looking straight
+# along the path uses the agent's `stop_within`.
+SIDE_STOP_WITHIN_M = 0.06
+_AHEAD = {"forward": "front_center", "backward": "back"}
+_BESIDE = {"forward": ("front_left", "front_right"), "backward": ()}
+# The ledge sensors on the end a move heads toward; a turn swings every corner.
+_LEDGES = {"forward": sensors.FRONT_LEDGES, "backward": sensors.REAR_LEDGES,
+           "turn": sensors.LEDGES}
 
 
 def _sensor_readings() -> dict:
-    """The distance sensors as a result field, plus a note when there is no sensor data (so an
-    `ok: true` can't be mistaken for "nothing was touched")."""
+    """The distance sensors as a result field, any corner whose ledge sensor sees a drop, and a
+    note when there is no sensor data (so an `ok: true` can't be mistaken for "nothing was
+    touched")."""
     monitor = runtime.get_sensors()
     out = {"distances_m": monitor.distances()}
+    drops = monitor.drops()
+    if drops:
+        out["ledges_detected"] = drops
     if not monitor.online:
         out["sensors"] = sensors.OFFLINE
     return out
@@ -98,6 +112,38 @@ def _sensor_readings() -> dict:
 
 def _pressed_bumpers() -> list:
     return runtime.get_sensors().pressed()
+
+
+def _limits(direction: str, stop_within: float) -> dict:
+    """{range sensor: the reading that stops a straight drive}: `stop_within` for the sensor
+    looking straight along the path, and at most SIDE_STOP_WITHIN_M for the angled ones. 0 turns
+    the check off."""
+    if stop_within <= 0:
+        return {}
+    limits = {_AHEAD[direction]: stop_within}
+    for sensor in _BESIDE[direction]:
+        limits[sensor] = min(stop_within, SIDE_STOP_WITHIN_M)
+    return limits
+
+
+def _held_by_ledge(kind: str):
+    """The result for a move toward a drop, or None. While a ledge sensor on the end the robot
+    would head toward (any corner, for a turn) sees no floor, the move isn't sent: it would take
+    the robot over the edge."""
+    drops = [c for c in runtime.get_sensors().drops() if c in _LEDGES[kind]]
+    if not drops:
+        return None
+    which = f"the {' and '.join(drops)} ledge sensor{'s see' if len(drops) > 1 else ' sees'}"
+    if kind == "turn":
+        what, then = "turn while a corner is over it", "Drive straight away from the drop first."
+    else:
+        away = "backward" if kind == "forward" else "forward"
+        what, then = f"drive {kind} toward it", f"Move {away}, away from it."
+    return {"ok": False, "duration_ms": 0,
+            "ledge": {"ledges": drops, "after_ms": 0, "already_detected": True},
+            "message": f"did not move: {which} a drop (no floor), and the robot won't {what}. "
+                       f"{then}",
+            **_sensor_readings()}
 
 
 def _held_by_bumper(direction: str):
@@ -118,41 +164,39 @@ def _held_by_bumper(direction: str):
             **_sensor_readings()}
 
 
-def _already_within(direction: str, stop_within: float):
-    """The result for a straight drive that `stop_within` would end at once, or None: a sensor
-    facing that way already reads closer than that, so the move isn't sent (the robot would
+def _already_within(limits: dict):
+    """The result for a straight drive its own limits would end at once, or None: a sensor
+    facing that way already reads inside its limit, so the move isn't sent (the robot would
     creep forward a little on every try). A reading the sensor doesn't trust, or no recent one,
     doesn't hold the robot; the bumpers still stop it."""
-    if stop_within <= 0:
-        return None
     readings = runtime.get_sensors().distances()
-    close = [(readings[s], s) for s in _WATCH[direction]
-             if isinstance(readings[s], float) and readings[s] < stop_within]
+    close = [(readings[s] - limit, s, readings[s], limit) for s, limit in limits.items()
+             if isinstance(readings[s], float) and readings[s] < limit]
     if not close:
         return None
-    distance, sensor = min(close)
+    _, sensor, distance, limit = min(close)
     return {"ok": False, "duration_ms": 0,
-            "obstacle": {"sensor": sensor, "distance_m": distance, "stop_within": stop_within,
+            "obstacle": {"sensor": sensor, "distance_m": distance, "limit_m": limit,
                          "after_ms": 0, "estimated_traveled_m": 0.0, "already_within": True},
             "message": (f"did not move: the {sensor} distance sensor already reads {distance} m, "
-                        f"closer than stop_within ({stop_within} m). To go closer on purpose, "
-                        f"pass a smaller stop_within (0 turns the check off); otherwise turn or "
-                        f"back up first."),
+                        f"inside its {limit} m limit. To go closer on purpose, pass a smaller "
+                        f"stop_within (0 turns the check off); otherwise turn or back up first."),
             **_sensor_readings()}
 
 
 def _drive(linear: int, angular: int, ms: int, *, planned_m=None, planned_deg=None,
-           watch=(), stop_within: float = 0.0) -> dict:
+           limits=None, ledges=()) -> dict:
     """One timed drive, watched by the sensors, on the real robot or the simulated one.
 
-    The wait ends at the first bumper contact, or, with `stop_within` > 0, at the first trusted
-    reading from a sensor in `watch` closer than `stop_within` (the agent's own stop condition,
-    checked against every reading as it arrives), instead of sleeping out the planned time;
-    stop() is then sent. (Misty's hazard system already halts a forward drive when a front bumper
-    is pressed; stop() is harmless there and covers everything else.) Whichever ended the move
-    becomes the result: which bumper or sensor, how long into the move, and for a straight drive
-    (`planned_m`) about how far the robot got, from the drive calibration run backwards. Without
-    sensor data this is the old open-loop wait."""
+    The wait ends at the first bumper contact, at the first drop under a ledge sensor in
+    `ledges`, or at the first trusted range reading inside its limit in `limits` (the agent's
+    own stop condition, checked against every reading as it arrives), instead of sleeping out
+    the planned time; stop() is then sent. (Misty's hazard system already halts a forward drive
+    when a front bumper is pressed or a ledge is seen; stop() is harmless there and covers
+    everything else.) Whatever ended the move becomes the result: which ledge sensor, bumper or
+    distance sensor, how long into the move, and for a straight drive (`planned_m`) about how far
+    the robot got, from the drive calibration run backwards. Without sensor data this is the old
+    open-loop wait."""
     monitor = runtime.get_sensors()
     robot = runtime.get_robot()
     if config.is_sim():                   # the simulated robot is told the exact amount
@@ -160,7 +204,7 @@ def _drive(linear: int, angular: int, ms: int, *, planned_m=None, planned_deg=No
     t0 = monitor.now()
     robot.drive_time(linear, angular, ms)
     reason = monitor.wait_for_stop(since=t0, timeout=runtime.wait_budget(ms / 1000),
-                                   watch=watch, stop_within=stop_within)
+                                   limits=limits, ledges=ledges)
     # The readings a result reports are taken after the robot came to rest: after an early stop,
     # only from once it has coasted to a halt, so `distances_m` is where it ended up rather than
     # where it was when the stop was sent.
@@ -171,43 +215,64 @@ def _drive(linear: int, angular: int, ms: int, *, planned_m=None, planned_deg=No
     monitor.wait_fresh(since=monitor.now() + coast,
                        timeout=runtime.wait_budget(coast + _SETTLE_S))
     runtime.save_sim_state()
-    contacts = monitor.contacts_since(t0)     # also catches one that landed as the move ended
+
+    def when(t) -> dict:
+        after_ms = max(0, int(round((t - t0) * 1000)))
+        block = {"after_ms": after_ms}
+        if planned_m is not None:
+            block["estimated_traveled_m"] = runtime.calc_drive_progress(after_ms, planned_m)
+        return block
+
+    result, why = {"ok": True, "duration_ms": ms}, []
+    # Also catches a drop or a contact that landed as the move ended.
+    drops = [d for d in monitor.drops_since(t0) if d["ledge"] in ledges]
+    if drops:
+        seen = {d["ledge"] for d in drops}
+        corners = [c for c in sensors.LEDGES if c in seen]
+        result["ledge"] = {"ledges": corners, **when(drops[0]["t"])}
+        why.append(f"the {' and '.join(corners)} ledge sensor{'s' if len(corners) > 1 else ''} "
+                   f"saw a drop {result['ledge']['after_ms']} ms into the move")
+    contacts = monitor.contacts_since(t0)
     if contacts:
-        after_ms = max(0, int(round((contacts[0]["t"] - t0) * 1000)))
         hit = {c["bumper"] for c in contacts}
-        bump = {"bumpers": [b for b in sensors.BUMPERS if b in hit], "after_ms": after_ms}
-        if planned_m is not None:
-            bump["estimated_traveled_m"] = runtime.calc_drive_progress(after_ms, planned_m)
+        result["bump"] = {"bumpers": [b for b in sensors.BUMPERS if b in hit],
+                          **when(contacts[0]["t"])}
         if contacts[0].get("time"):
-            bump["time"] = contacts[0]["time"]
-        return {"ok": False, "duration_ms": ms, "bump": bump,
-                "message": f"a bumper was pressed {after_ms} ms into the move, so the robot "
-                           f"stopped",
-                **_sensor_readings()}
-    if reason is not None and "obstacle" in reason:
+            result["bump"]["time"] = contacts[0]["time"]
+        why.append(f"a bumper was pressed {result['bump']['after_ms']} ms into the move")
+    if not why and reason is not None and "obstacle" in reason:
         seen = reason["obstacle"]
-        after_ms = max(0, int(round((seen["t"] - t0) * 1000)))
-        obstacle = {"sensor": seen["sensor"], "distance_m": seen["distance_m"],
-                    "stop_within": stop_within, "after_ms": after_ms}
-        if planned_m is not None:
-            obstacle["estimated_traveled_m"] = runtime.calc_drive_progress(after_ms, planned_m)
-        return {"ok": False, "duration_ms": ms, "obstacle": obstacle,
-                "message": (f"stopped {after_ms} ms into the move: the {seen['sensor']} "
-                            f"distance sensor read {seen['distance_m']} m, closer than "
-                            f"stop_within ({stop_within} m)"),
-                **_sensor_readings()}
-    return {"ok": True, "duration_ms": ms, **_sensor_readings()}
+        result["obstacle"] = {"sensor": seen["sensor"], "distance_m": seen["distance_m"],
+                              "limit_m": seen["limit_m"], **when(seen["t"])}
+        why.append(f"the {seen['sensor']} distance sensor read {seen['distance_m']} m "
+                   f"{result['obstacle']['after_ms']} ms into the move, inside its "
+                   f"{seen['limit_m']} m limit")
+    if why:
+        result["ok"] = False
+        result["message"] = "; ".join(why) + ", so the robot stopped"
+    result.update(_sensor_readings())
+    return result
 
 
 def _straight(direction: str, distance: float, stop_within) -> dict:
     ms = runtime.calc_drive_time(distance)
-    stop_within = max(0.0, float(stop_within or 0.0))
+    limits = _limits(direction, max(0.0, float(stop_within or 0.0)))
     with runtime.motor_lock("DRIVE"):
-        held = _held_by_bumper(direction) or _already_within(direction, stop_within)
+        held = (_held_by_ledge(direction) or _held_by_bumper(direction)
+                or _already_within(limits))
         if held:
             return held
         return _drive(50 if direction == "forward" else -50, 0, ms, planned_m=distance,
-                      watch=_WATCH[direction], stop_within=stop_within)
+                      limits=limits, ledges=_LEDGES[direction])
+
+
+def _turn(angular: int, degrees: float) -> dict:
+    ms = runtime.calc_turn_time(degrees)
+    with runtime.motor_lock("DRIVE"):
+        held = _held_by_ledge("turn")
+        if held:
+            return held
+        return _drive(0, angular, ms, planned_deg=degrees, ledges=_LEDGES["turn"])
 
 
 @_tool()
@@ -222,16 +287,12 @@ def move_backward(distance: float = 1.0, stop_within: float = DEFAULT_STOP_WITHI
 
 @_tool()
 def turn_left(degrees: float) -> dict:
-    ms = runtime.calc_turn_time(degrees)
-    with runtime.motor_lock("DRIVE"):
-        return _drive(0, 100, ms, planned_deg=degrees)      # positive angular = counter-clockwise
+    return _turn(100, degrees)          # positive angular = counter-clockwise
 
 
 @_tool()
 def turn_right(degrees: float) -> dict:
-    ms = runtime.calc_turn_time(degrees)
-    with runtime.motor_lock("DRIVE"):
-        return _drive(0, -100, ms, planned_deg=degrees)
+    return _turn(-100, degrees)
 
 
 @_tool()
@@ -244,9 +305,12 @@ def stop() -> dict:
 # --------------------------------------------------------------------------- sensing
 @_tool()
 def read_distance_sensors() -> dict:
-    """The four range (time-of-flight) sensors, in metres from the robot's body, and which
-    bumpers are pressed right now. No motor moves, so no lock."""
-    return {"ok": True, **_sensor_readings(), "bumpers_pressed": _pressed_bumpers()}
+    """The four range (time-of-flight) sensors, in metres from the robot's body, which bumpers
+    are pressed right now, and which corners' ledge sensors see a drop. No motor moves, so no
+    lock."""
+    monitor = runtime.get_sensors()
+    return {"ok": True, **_sensor_readings(), "bumpers_pressed": monitor.pressed(),
+            "ledges_detected": monitor.drops()}
 
 
 # ------------------------------------------------------------------------- expression

@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Misty live sensors</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+    --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+    --beam-off: rgba(11, 11, 11, 0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+      --beam-off: rgba(255, 255, 255, 0.06);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --beam-off: rgba(255, 255, 255, 0.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center;
+    gap: 8px 16px; padding: 12px 16px; background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  .meta { color: var(--ink-2); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--ink-2); white-space: nowrap;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .spacer { flex: 1; }
+  #stop {
+    font: inherit; font-weight: 700; letter-spacing: 0.04em; color: #fff; background: var(--critical);
+    border: 0; border-radius: 8px; padding: 10px 22px; cursor: pointer; min-height: 44px;
+  }
+  #stop:active { transform: translateY(1px); }
+  main { padding: 16px; display: grid; gap: 16px; max-width: 1200px; margin: 0 auto;
+         grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 900px) {
+    main { grid-template-columns: 380px minmax(0, 1fr); }
+    .wide { grid-column: 1 / -1; }
+  }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+          padding: 14px 16px; min-width: 0; }
+  .card h2 { font-size: 13px; font-weight: 600; margin: 0 0 10px; color: var(--ink-2);
+             text-transform: uppercase; letter-spacing: 0.04em; }
+  .stack { display: grid; gap: 16px; align-content: start; min-width: 0; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--grid); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.num, th.num { text-align: right; }
+  .key { display: inline-block; width: 14px; height: 2px; border-radius: 1px;
+         vertical-align: middle; margin-right: 6px; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 6px; font-weight: 600;
+           font-size: 12px; color: #fff; background: var(--muted); }
+  .badge.ok { background: var(--good); } .badge.obstacle { background: var(--warning); color: #0b0b0b; }
+  .badge.bump, .badge.ledge, .badge.error { background: var(--critical); } .badge.refused { background: var(--serious); }
+  .detail { color: var(--ink-2); margin-top: 6px; overflow-wrap: anywhere; }
+  .bar { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; margin: 8px 0 4px; }
+  .bar > div { height: 100%; width: 0; background: var(--s1); transition: width 0.1s linear; }
+  .bumpers { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .bumpers span { padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border);
+                  color: var(--ink-2); font-size: 12px; }
+  .bumpers span.on { background: var(--critical); color: #fff; border-color: var(--critical); }
+  #diagram { width: 100%; height: auto; display: block; }
+  .caption { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--ink-2); font-size: 12px;
+            margin-bottom: 6px; }
+  #chartwrap { position: relative; }
+  #chart { width: 100%; height: 200px; display: block; }
+  #tip { position: absolute; pointer-events: none; background: var(--surface); color: var(--ink);
+         border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font-size: 12px;
+         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); display: none; white-space: nowrap;
+         font-variant-numeric: tabular-nums; }
+  #log { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow-y: auto;
+         font-variant-numeric: tabular-nums; }
+  #log li { padding: 4px 0; border-bottom: 1px solid var(--grid); display: flex; gap: 10px; }
+  #log time { color: var(--muted); flex: none; }
+  #log b { flex: none; min-width: 64px; font-weight: 600; color: var(--ink-2); }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Misty live sensors</h1>
+  <span class="meta" id="target">connecting…</span>
+  <span class="pill"><span class="dot" id="conn-dot"></span><span id="conn">connecting</span></span>
+  <span class="pill" id="stopwithin">stop_within –</span>
+  <span class="spacer"></span>
+  <button id="stop" type="button" aria-label="Stop the robot now">STOP</button>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Around the robot</h2>
+    <svg id="diagram" viewBox="0 0 360 400" role="img"
+         aria-label="Top-down view of Misty with its distance, ledge and bump sensors"></svg>
+    <div class="caption">Top-down, front up. Beam angles are approximate (outer sensors ~30° out,
+      25° cones). Beams reach 1.2 m; a red beam is inside stop_within.</div>
+  </section>
+
+  <div class="stack">
+    <section class="card">
+      <h2>Drive</h2>
+      <div id="drive" class="empty">idle</div>
+      <div class="bar" id="progress" hidden><div></div></div>
+      <div id="last" class="detail"></div>
+    </section>
+
+    <section class="card">
+      <h2>Distance sensors</h2>
+      <table>
+        <thead><tr><th>Sensor</th><th class="num">Reading</th><th class="num">Status</th>
+          <th class="num">Age</th><th class="num">Rate</th></tr></thead>
+        <tbody id="ranges"></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Ledge sensors and bumpers</h2>
+      <table>
+        <thead><tr><th>Corner</th><th class="num">Floor distance</th><th class="num">State</th>
+          <th class="num">Age</th></tr></thead>
+        <tbody id="edges"></tbody>
+      </table>
+      <div class="bumpers" id="bumpers"></div>
+      <div class="detail" id="hazard"></div>
+    </section>
+  </div>
+
+  <section class="card wide">
+    <h2>Distance, last 20 s</h2>
+    <div class="legend" id="legend"></div>
+    <div id="chartwrap">
+      <svg id="chart" role="img" aria-label="Distance readings of the four range sensors over the last 20 seconds"></svg>
+      <div id="tip"></div>
+    </div>
+  </section>
+
+  <section class="card wide">
+    <h2>Events</h2>
+    <ul id="log"></ul>
+  </section>
+</main>
+
+<script>
+"use strict";
+const SENSORS = [
+  {key: "front_left",   short: "FL", name: "front left",   color: "var(--s1)", x: 172, y: 196, a: -30},
+  {key: "front_center", short: "FC", name: "front centre", color: "var(--s2)", x: 180, y: 196, a: 0},
+  {key: "front_right",  short: "FR", name: "front right",  color: "var(--s3)", x: 188, y: 196, a: 30},
+  {key: "back",         short: "BK", name: "back",         color: "var(--s4)", x: 180, y: 234, a: 180},
+];
+const CORNERS = [
+  {key: "front_left", name: "front left", x: 161, y: 193},
+  {key: "front_right", name: "front right", x: 199, y: 193},
+  {key: "rear_left", name: "rear left", x: 161, y: 237},
+  {key: "rear_right", name: "rear right", x: 199, y: 237},
+];
+const SCALE = 120, MAX_RANGE = 1.2, HALF_CONE = 12.5, HISTORY_S = 20;
+const NS = "http://www.w3.org/2000/svg";
+const $ = id => document.getElementById(id);
+const history = [];
+let latest = null;
+
+function el(tag, attrs, parent) {
+  const node = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
+  if (parent) parent.appendChild(node);
+  return node;
+}
+function num(v) { return typeof v === "number" && isFinite(v) ? v : null; }
+function fmtM(v) {
+  if (v === "unknown") return "no data";
+  if (v === "no reading") return "none";
+  return num(v) === null ? "–" : v.toFixed(2) + " m";
+}
+function clock(wall) {
+  const d = new Date(wall * 1000);
+  return d.toLocaleTimeString([], {hour12: false}) + "." + String(d.getMilliseconds()).padStart(3, "0").slice(0, 1);
+}
+
+// ---------------------------------------------------------------- diagram
+const svg = $("diagram");
+const beams = {}, bumperLines = {}, ledgeDots = {};
+function dir(deg) { const r = deg * Math.PI / 180; return [Math.sin(r), -Math.cos(r)]; }
+function wedge(x, y, a, len) {
+  const [x1, y1] = dir(a - HALF_CONE), [x2, y2] = dir(a + HALF_CONE);
+  return `M${x},${y} L${x + x1 * len},${y + y1 * len} A${len},${len} 0 0 1 ${x + x2 * len},${y + y2 * len} Z`;
+}
+(function buildDiagram() {
+  el("text", {x: 180, y: 22, "text-anchor": "middle", fill: "var(--muted)", "font-size": 12}, svg)
+    .textContent = "front";
+  for (const s of SENSORS) {
+    el("path", {d: wedge(s.x, s.y, s.a, MAX_RANGE * SCALE), fill: "var(--beam-off)",
+                stroke: "var(--grid)", "stroke-width": 1}, svg);
+  }
+  for (const s of SENSORS) {
+    const path = el("path", {d: "", fill: "var(--good)", "fill-opacity": 0.35, stroke: "none"}, svg);
+    const [dx, dy] = dir(s.a);
+    const label = el("text", {"text-anchor": "middle", "font-size": 12, fill: "var(--ink)",
+                              "font-weight": 600}, svg);
+    beams[s.key] = {path, label, dx, dy, s};
+  }
+  el("rect", {x: 164, y: 196, width: 32, height: 38, rx: 9, fill: "var(--surface)",
+              stroke: "var(--ink-2)", "stroke-width": 1.5}, svg);
+  el("path", {d: "M180,204 l-5,7 h10 z", fill: "var(--ink-2)"}, svg);
+  const edges = {front_left: [166, 196, 180, 196], front_right: [180, 196, 194, 196],
+                 rear_left: [166, 234, 180, 234], rear_right: [180, 234, 194, 234]};
+  for (const [key, [x1, y1, x2, y2]] of Object.entries(edges)) {
+    bumperLines[key] = el("line", {x1, y1, x2, y2, stroke: "var(--axis)", "stroke-width": 3,
+                                   "stroke-linecap": "round"}, svg);
+  }
+  for (const c of CORNERS) {
+    const dot = el("circle", {cx: c.x, cy: c.y, r: 4, fill: "var(--muted)", stroke: "var(--surface)",
+                              "stroke-width": 2}, svg);
+    const title = el("title", {}, dot);
+    ledgeDots[c.key] = {dot, title};
+  }
+})();
+
+function beamColor(v, stopWithin) {
+  if (num(v) === null) return null;
+  if (stopWithin > 0 && v < stopWithin) return "var(--critical)";
+  if (v < 0.5) return "var(--warning)";
+  return "var(--good)";
+}
+
+function drawDiagram(snap) {
+  for (const s of SENSORS) {
+    const b = beams[s.key], r = snap.range[s.key] || {};
+    const v = r.value, color = beamColor(v, snap.stop_within);
+    const len = (num(v) === null ? MAX_RANGE : Math.min(v, MAX_RANGE)) * SCALE;
+    b.path.setAttribute("d", num(v) === null ? "" : wedge(s.x, s.y, s.a, Math.max(len, 2)));
+    if (color) b.path.setAttribute("fill", color);
+    const at = Math.max(len, 18) + 14;
+    b.label.setAttribute("x", s.x + b.dx * at);
+    b.label.setAttribute("y", s.y + b.dy * at + 4);
+    let text = v === "no reading" ? "clear" : v === "unknown" ? "no data" : v.toFixed(2) + " m";
+    if (color === "var(--critical)") text += " · stop";
+    b.label.textContent = text;
+    b.label.setAttribute("fill", num(v) === null ? "var(--muted)" : "var(--ink)");
+  }
+  for (const [key, line] of Object.entries(bumperLines)) {
+    const on = !!(snap.bumpers || {})[key];
+    line.setAttribute("stroke", on ? "var(--critical)" : "var(--axis)");
+    line.setAttribute("stroke-width", on ? 6 : 3);
+  }
+  for (const c of CORNERS) {
+    const e = (snap.edge || {})[c.key], d = ledgeDots[c.key];
+    d.dot.setAttribute("fill", !e ? "var(--muted)" : e.drop ? "var(--critical)" : "var(--good)");
+    d.dot.setAttribute("r", e && e.drop ? 6 : 4);
+    d.title.textContent = !e ? `${c.name} ledge sensor: no data`
+      : `${c.name} ledge sensor: ${(e.distance * 100).toFixed(1)} cm${e.drop ? " (drop)" : ""}`;
+  }
+}
+
+// ---------------------------------------------------------------- tables
+function cell(tr, text, cls) {
+  const td = document.createElement("td");
+  td.textContent = text;
+  if (cls) td.className = cls;
+  tr.appendChild(td);
+  return td;
+}
+function drawTables(snap) {
+  const ranges = $("ranges");
+  ranges.replaceChildren();
+  for (const s of SENSORS) {
+    const r = snap.range[s.key] || {}, tr = document.createElement("tr");
+    const name = cell(tr, s.name);
+    const key = document.createElement("span");
+    key.className = "key"; key.style.background = s.color;
+    name.prepend(key);
+    cell(tr, fmtM(r.value), "num");
+    cell(tr, r.status === null || r.status === undefined ? "–" : String(r.status), "num");
+    cell(tr, r.age_ms === null || r.age_ms === undefined ? "–" : r.age_ms + " ms", "num");
+    cell(tr, r.hz ? r.hz.toFixed(1) + " /s" : "–", "num");
+    ranges.appendChild(tr);
+  }
+  const edges = $("edges");
+  edges.replaceChildren();
+  for (const c of CORNERS) {
+    const e = (snap.edge || {})[c.key], tr = document.createElement("tr");
+    cell(tr, c.name);
+    cell(tr, e && num(e.distance) !== null ? (e.distance * 100).toFixed(1) + " cm" : "–", "num");
+    const state = cell(tr, !e ? "no data" : e.drop ? "DROP" : "floor", "num");
+    if (e && e.drop) state.style.fontWeight = 700;
+    cell(tr, e ? e.age_ms + " ms" : "–", "num");
+    edges.appendChild(tr);
+  }
+  const bumpers = $("bumpers");
+  bumpers.replaceChildren();
+  for (const c of CORNERS) {
+    const on = !!(snap.bumpers || {})[c.key], span = document.createElement("span");
+    span.textContent = `${c.name} bumper: ${on ? "pressed" : "free"}`;
+    if (on) span.className = "on";
+    bumpers.appendChild(span);
+  }
+  const hz = snap.hazard;
+  $("hazard").textContent = hz ? `Misty hazard system: ${hz.active.length ? hz.active.join(", ") : "clear"} (${clock(hz.wall)})`
+    : `Misty hazard system: no notification yet (a ledge sensor reading over ${(snap.ledge_drop_m * 100).toFixed(0)} cm counts as a drop)`;
+}
+
+function drawDrive(snap) {
+  const d = snap.drive, box = $("drive"), bar = $("progress");
+  if (d) {
+    box.className = "";
+    box.textContent = `${d.command} · ${d.elapsed_s.toFixed(1)} / ${d.planned_s.toFixed(1)} s`;
+    bar.hidden = false;
+    bar.firstElementChild.style.width = Math.min(100, 100 * d.elapsed_s / Math.max(d.planned_s, 0.01)) + "%";
+  } else {
+    box.className = "empty"; box.textContent = "idle"; bar.hidden = true;
+  }
+  const last = snap.last, out = $("last");
+  out.replaceChildren();
+  if (last) {
+    const badge = document.createElement("span");
+    badge.className = "badge " + last.outcome;
+    badge.textContent = last.outcome.toUpperCase();
+    const text = document.createElement("span");
+    text.textContent = ` ${last.command} — ${last.detail}`;
+    out.append("Last: ", badge, text);
+  }
+}
+
+// ---------------------------------------------------------------- chart
+const chart = $("chart"), tip = $("tip");
+const M = {left: 40, right: 72, top: 10, bottom: 24};
+(function legend() {
+  for (const s of SENSORS) {
+    const item = document.createElement("span"), key = document.createElement("span");
+    key.className = "key"; key.style.background = s.color;
+    item.append(key, s.name);
+    $("legend").appendChild(item);
+  }
+})();
+let hoverX = null;
+
+function drawChart(snap) {
+  const W = chart.clientWidth || 600, H = chart.clientHeight || 200;
+  chart.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  chart.replaceChildren();
+  const now = snap ? snap.wall : Date.now() / 1000;
+  const x = t => M.left + (W - M.left - M.right) * (1 - (now - t) / HISTORY_S);
+  const y = v => H - M.bottom - (H - M.top - M.bottom) * Math.min(v, 1.3) / 1.3;
+  for (const v of [0, 0.5, 1.0]) {
+    el("line", {x1: M.left, x2: W - M.right, y1: y(v), y2: y(v), stroke: v === 0 ? "var(--axis)" : "var(--grid)",
+                "stroke-width": 1}, chart);
+    el("text", {x: M.left - 6, y: y(v) + 4, "text-anchor": "end", "font-size": 11, fill: "var(--muted)"}, chart)
+      .textContent = v.toFixed(1) + " m";
+  }
+  for (const s of [20, 15, 10, 5, 0]) {
+    el("text", {x: x(now - s), y: H - 6, "text-anchor": "middle", "font-size": 11, fill: "var(--muted)"}, chart)
+      .textContent = s ? `−${s} s` : "now";
+  }
+  if (snap && snap.stop_within > 0) {
+    el("line", {x1: M.left, x2: W - M.right, y1: y(snap.stop_within), y2: y(snap.stop_within),
+                stroke: "var(--critical)", "stroke-width": 1}, chart);
+    el("text", {x: M.left + 4, y: y(snap.stop_within) - 4, "font-size": 11, fill: "var(--muted)"}, chart)
+      .textContent = `stop_within ${snap.stop_within} m`;
+  }
+  const ends = [];
+  for (const s of SENSORS) {
+    let d = "", pen = false, last = null;
+    for (const h of history) {
+      const v = h.v[s.key];
+      if (v === null) { pen = false; continue; }
+      d += `${pen ? "L" : "M"}${x(h.t).toFixed(1)},${y(v).toFixed(1)}`;
+      pen = true; last = {t: h.t, v};
+    }
+    if (d) el("path", {d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round",
+                       "stroke-linecap": "round"}, chart);
+    if (last && now - last.t < 1.5) ends.push({s, px: x(last.t), py: y(last.v), v: last.v});
+  }
+  ends.sort((a, b) => a.py - b.py);           // direct labels, nudged apart
+  let floor = -Infinity;
+  for (const e of ends) {
+    el("circle", {cx: e.px, cy: e.py, r: 4, fill: e.s.color, stroke: "var(--surface)", "stroke-width": 2}, chart);
+    const ly = Math.max(e.py + 4, floor + 13);
+    floor = ly;
+    el("text", {x: W - M.right + 8, y: ly, "font-size": 11, fill: "var(--ink-2)"}, chart)
+      .textContent = `${e.s.short} ${e.v.toFixed(2)}`;
+  }
+  if (hoverX !== null && history.length) {
+    let best = null;
+    for (const h of history) if (!best || Math.abs(x(h.t) - hoverX) < Math.abs(x(best.t) - hoverX)) best = h;
+    const bx = x(best.t);
+    el("line", {x1: bx, x2: bx, y1: M.top, y2: H - M.bottom, stroke: "var(--axis)", "stroke-width": 1}, chart);
+    tip.replaceChildren();
+    const head = document.createElement("div");
+    head.textContent = `${(now - best.t).toFixed(1)} s ago`;
+    head.style.color = "var(--muted)";
+    tip.appendChild(head);
+    for (const s of SENSORS) {
+      const row = document.createElement("div"), key = document.createElement("span");
+      key.className = "key"; key.style.background = s.color;
+      const v = best.v[s.key];
+      row.append(key, `${s.name}: ${v === null ? (best.raw[s.key] === "no reading" ? "none" : "no data") : v.toFixed(3) + " m"}`);
+      tip.appendChild(row);
+    }
+    tip.style.display = "block";
+    tip.style.left = Math.min(bx + 12, W - 170) + "px";
+    tip.style.top = "8px";
+  } else {
+    tip.style.display = "none";
+  }
+}
+chart.addEventListener("pointermove", ev => {
+  const r = chart.getBoundingClientRect();
+  hoverX = ev.clientX - r.left;
+  drawChart(latest);
+});
+chart.addEventListener("pointerleave", () => { hoverX = null; drawChart(latest); });
+
+// ---------------------------------------------------------------- events + stream
+function addLog(item) {
+  const li = document.createElement("li"), t = document.createElement("time"), b = document.createElement("b");
+  const text = document.createElement("span");
+  t.textContent = clock(item.wall); b.textContent = item.kind; text.textContent = item.text;
+  li.append(t, b, text);
+  const log = $("log");
+  log.prepend(li);
+  while (log.children.length > 60) log.lastChild.remove();
+}
+
+function setConn(state, text) {
+  $("conn").textContent = text;
+  $("conn-dot").style.background = {ok: "var(--good)", warn: "var(--warning)", bad: "var(--critical)"}[state];
+}
+
+function render(snap) {
+  latest = snap;
+  $("target").textContent = `${snap.mode === "real" ? "robot" : snap.mode} · ${snap.target}`;
+  $("stopwithin").textContent = `stop_within ${snap.stop_within} m`;
+  setConn(snap.online ? "ok" : "warn", snap.online ? "sensors streaming" : "no sensor data");
+  const v = {}, raw = {};
+  for (const s of SENSORS) {
+    const val = (snap.range[s.key] || {}).value;
+    v[s.key] = num(val); raw[s.key] = val;
+  }
+  history.push({t: snap.wall, v, raw});
+  while (history.length && snap.wall - history[0].t > HISTORY_S + 1) history.shift();
+  drawDiagram(snap); drawTables(snap); drawDrive(snap); drawChart(snap);
+}
+
+const stream = new EventSource("/events");
+stream.addEventListener("state", e => render(JSON.parse(e.data)));
+stream.addEventListener("log", e => addLog(JSON.parse(e.data)));
+stream.onerror = () => setConn("bad", "page disconnected from the console");
+
+$("stop").addEventListener("click", () => {
+  fetch("/stop", {method: "POST"}).catch(() => setConn("bad", "stop failed: console unreachable"));
+});
+window.addEventListener("resize", () => drawChart(latest));
+</script>
+</body>
+</html>

@@ -31,13 +31,20 @@ Planning guidance:
   measure again as you close in. Every move's result also carries the readings from right after
   it (`distances_m`).
 - **Moves stop themselves short of obstacles.** `move_forward` and `move_backward` take
-  `stop_within` (default 0.15 m): when a distance sensor facing the way you're driving reads
-  closer than that, the robot stops, and the result is `ok: false` with an `obstacle` block (the
-  sensor, its reading, `after_ms`, `estimated_traveled_m`). `already_within: true` means it didn't
-  move at all, because something was already that close. The robot can coast a few centimetres
-  past that reading before it stops, so `distances_m` is where it ended up. Keep the default
-  unless you mean to touch something; then pass a smaller `stop_within` (0 turns it off). The
-  sensors only see what's inside their narrow beams at base height, so a bump can still happen.
+  `stop_within` (default 0.15 m): when the distance sensor looking straight the way you're
+  driving reads closer than that, the robot stops, and the result is `ok: false` with an
+  `obstacle` block (the sensor, its reading, `after_ms`, `estimated_traveled_m`). The two angled
+  front sensors mostly see what's beside you, so they stop it only within 0.06 m; passing close
+  to a wall or through a doorway is fine. `already_within: true` means it didn't move at all,
+  because something was already that close. The robot can coast a few centimetres past that
+  reading before it stops, so `distances_m` is where it ended up. Keep the default unless you
+  mean to touch something; then pass a smaller `stop_within` (0 turns it off). The sensors only
+  see what's inside their narrow beams at base height, so a bump can still happen.
+- **Never drive toward a drop.** A `ledge` block (`ok: false`) means a downward sensor under a
+  corner saw no floor (stairs, a table edge) and the robot stopped short of it;
+  `already_detected: true` means it didn't move at all. Don't retry toward it and don't turn
+  near it: move straight away from it (backward after a front ledge), then report the drop.
+  There is no way across it. `ledges_detected` in a result lists corners over a drop right now.
 - When obstacles are in the path, reason about the turn degrees and move distances needed to
   pass them without collision. Don't emit a sequence casually.
 - **Check every result, and know what it can't tell you.** `ok: true` means nothing stopped the

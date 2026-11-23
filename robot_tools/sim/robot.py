@@ -15,6 +15,9 @@ reproduces that chain, so the sim runs the same tools.py and SensorMonitor code 
     about 0.32 s, as measured on the robot, with a few millimetres of noise: status 0 and the gap
     to the nearest surface in the cone when there is one within range, otherwise status 102
     (signal fail) and a meaningless distance, as the real sensors give when nothing is in front.
+  - The four ledge sensors publish downward TimeOfFlight messages about seven times a second,
+    reading the floor 2-4 cm below each corner, as measured on the robot. The sim world has no
+    ledges yet, so they never see a drop.
   - The four bumpers publish a BumpSensor message on every contact and every release, a moment
     after it happens. A bumper stays pressed while the body touches something on its side.
 
@@ -33,11 +36,16 @@ from datetime import datetime, timezone
 
 from .. import runtime
 from ..backend import StubRobot
-from ..sensors import _BUMP_IDS, _TOF_IDS, BUMPERS, RANGE_SENSORS, SensorMonitor
+from ..sensors import (_BUMP_IDS, _EDGE_IDS, _TOF_IDS, BUMPERS, LEDGES, RANGE_SENSORS,
+                       SensorMonitor)
 
 TOF_PERIOD_S = 0.316       # one range sensor's reading interval on Misty (median, 2026-11-22)
 TOF_JITTER_S = 0.02        # spread of that interval either way
 TOF_NOISE_SD_M = 0.003     # spread of a steady reading on the robot (it wandered about ±5 mm)
+EDGE_PERIOD_S = 0.143      # one ledge sensor's reading interval on Misty (about 7 a second)
+EDGE_NOISE_SD_M = 0.002
+FLOOR_M = {"front_left": 0.025, "front_right": 0.025, "rear_left": 0.036,
+           "rear_right": 0.024}  # each ledge sensor's floor reading on the robot
 BUMP_LATENCY_S = 0.05      # contact to message (assumed: "a few tens of ms")
 STOP_LATENCY_S = 0.1       # stop() to wheels stopped (assumed)
 PHYSICS_DT_S = 0.02        # motion is stepped at least this finely
@@ -47,6 +55,9 @@ _EPS = 1e-9
 TOF_ID = {name: sensor_id for sensor_id, name in _TOF_IDS.items()}
 TOF_POSITION = {"front_left": "Left", "front_center": "Center", "front_right": "Right",
                 "back": "Back"}
+EDGE_ID = {name: sensor_id for sensor_id, name in _EDGE_IDS.items()}
+EDGE_POSITION = {"front_left": "DownFrontLeft", "front_right": "DownFrontRight",
+                 "rear_left": "DownBackLeft", "rear_right": "DownBackRight"}
 BUMP_ID = {name: sensor_id for sensor_id, name in _BUMP_IDS.items()}
 BUMP_NAME = {"front_left": "Bump_FrontLeft", "front_right": "Bump_FrontRight",
              "rear_left": "Bump_RearLeft", "rear_right": "Bump_RearRight"}
@@ -70,6 +81,7 @@ class SimRobot(StubRobot):
         self._seq = itertools.count()
         n = len(RANGE_SENSORS)             # each sensor on its own cycle, staggered
         self._next_tof = {s: TOF_PERIOD_S * (i + 1) / n for i, s in enumerate(RANGE_SENSORS)}
+        self._next_edge = {c: EDGE_PERIOD_S * (i + 1) / len(LEDGES) for i, c in enumerate(LEDGES)}
         self.monitor = SensorMonitor(clock=self.now, source=self)
         with self._lock:
             self._update_bumpers()         # a robot placed against something starts pressed
@@ -142,7 +154,7 @@ class SimRobot(StubRobot):
 
     def _next_due(self) -> float:
         queued = self._queue[0][0] if self._queue else math.inf
-        return min(queued, min(self._next_tof.values()))
+        return min(queued, min(self._next_tof.values()), min(self._next_edge.values()))
 
     def _deliver_due(self) -> None:
         ready = []
@@ -153,6 +165,10 @@ class SimRobot(StubRobot):
                 ready.append(self._tof_message(sensor))
                 self._next_tof[sensor] += TOF_PERIOD_S + self._rng.uniform(-TOF_JITTER_S,
                                                                             TOF_JITTER_S)
+        for corner in LEDGES:
+            if self._next_edge[corner] <= self._t + _EPS:
+                ready.append(self._edge_message(corner))
+                self._next_edge[corner] += EDGE_PERIOD_S
         for message in ready:
             self.monitor.feed(json.dumps(message))    # the same parsing as the robot's stream
 
@@ -228,6 +244,14 @@ class SimRobot(StubRobot):
             "created": self._created(), "distanceInMeters": distance,
             "sensorId": TOF_ID[sensor], "sensorPosition": TOF_POSITION[sensor],
             "status": status, "type": "Range"}}
+
+    def _edge_message(self, corner: str) -> dict:
+        """A ledge sensor reading the floor under its corner (the sim world has no drops)."""
+        distance = round(max(0.0, FLOOR_M[corner] + self._rng.gauss(0.0, EDGE_NOISE_SD_M)), 3)
+        return {"eventName": f"ponder_edge_{EDGE_ID[corner]}", "message": {
+            "created": self._created(), "distanceInMeters": distance, "inHazard": False,
+            "sensorId": EDGE_ID[corner], "sensorPosition": EDGE_POSITION[corner],
+            "status": 0, "type": "Edge"}}
 
     def _bump_message(self, bumper: str, contacted: bool) -> dict:
         return {"eventName": "ponder_bump", "message": {
