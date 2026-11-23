@@ -13,7 +13,11 @@ Every `Agent` call must set **`subagent_type`** to `navigation` or `expression`,
 - **Spawn navigation fresh for each drive.** It ingests camera frames, and a resumed one re-sends every frame it has ever seen.
 - **Movement is open-loop dead-reckoning with no odometry**, so results are approximate. Re-check with world-manager only when it matters: the target was far, you're unsure you're on track, or an obstacle is close.
 - **A turn makes the map stale.** world-manager tracks object directions relative to the robot, so tell it whenever navigation has changed the heading.
+- **Tell navigation what's in the way.** Pass on anything perception saw between the robot and the target ("a box on the floor just right of the doorway"); navigation can lose sight of low things once it's close.
 - If navigation reports `INFEASIBLE`, report that up rather than forcing it.
+- **Pass surprises up.** If an expert's report has a `SURPRISE:` line, copy it word for word into your
+  report to the Director, even when the task succeeded. Whether the user hears about it is the
+  Director's call.
 
 ## Requests and escalation
 - Use `SendMessage` to communicate with the other managers, or the Director: request information as you need and answer their questions based on what you know.

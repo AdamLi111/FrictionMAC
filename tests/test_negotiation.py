@@ -143,6 +143,66 @@ def test_a_surprise_does_not_reopen_a_question_already_asked():
     assert gate.phase == neg.ASKED
 
 
+def test_a_surprise_flag_is_a_checkpoint_even_when_the_task_succeeded():
+    gate = neg.NegotiationGate()
+    _user(gate, "go to the door")
+    _verdict(gate, "PROCEED")
+    gate.report("navigation", "Went left round a box, then reached the door.\n"
+                              "**SURPRISE:** a box on the floor between us and the door\n"
+                              "STATUS: DONE")
+    assert gate.phase == neg.JUDGE
+    reason = gate.held("regular-utterance", background=False)
+    assert "navigation" in reason and "a box on the floor" in reason
+    assert _may(gate, "negotiator")
+
+
+@pytest.mark.parametrize("line", ["SURPRISE: none", "**Surprise:** None.", "No surprises."])
+def test_a_report_without_a_surprise_leaves_the_robot_clear(line):
+    gate = neg.NegotiationGate()
+    _user(gate, "go to the door")
+    _verdict(gate, "PROCEED")
+    gate.report("navigation", f"Reached the door.\n{line}\nSTATUS: DONE")
+    assert gate.phase == neg.CLEAR
+
+
+def test_only_object_lookup_and_navigation_flag_surprises():
+    gate = neg.NegotiationGate()
+    _user(gate, "say hi")
+    _verdict(gate, "PROCEED")
+    gate.report("regular-utterance", "Spoke: \"Hi!\"\nSURPRISE: nobody answered")
+    assert gate.phase == neg.CLEAR
+
+
+def test_a_surprise_flag_does_not_reopen_a_question_already_asked():
+    gate = neg.NegotiationGate()
+    _user(gate, "go to the cup")
+    _verdict(gate, "FRICTION", "probing")
+    gate.robot_spoke("Which cup?", "probing")
+    gate.report("object-lookup", "Two cups.\nSURPRISE: a third cup by the sink\nSTATUS: MULTIPLE")
+    assert gate.phase == neg.ASKED
+
+
+@pytest.mark.parametrize("steering", ["v1/director.md", "v2/director.md", "v3/agent.md",
+                                      "v4/director.md"])
+def test_every_deciding_agent_judges_friction_with_the_negotiators_triggers(steering):
+    """V1–V4's deciding agent (the Director; V3's single agent) reads one shared friction policy
+    with the negotiator's triggers, so the architectures differ in structure, not in what friction
+    is, and V4 → V5 isolates who decides. A trigger added to the negotiator and not the policy (or
+    the reverse) would quietly change every comparison."""
+    import re
+    from agent_runtime import config
+
+    def triggers(text):
+        section = text.split("## Triggers")[1].split("## Budget")[0]
+        return set(re.findall(r"\*\* \(`([a-z_]+)`", section))
+
+    negotiator = triggers(config.read_steering("v5/negotiator.md"))
+    assert {"referential_ambiguity", "user_knowledge", "physical_risk"} <= negotiator
+    prompt = config.read_steering(steering)
+    assert config.read_steering("shared/friction_policy.md").strip() in prompt
+    assert triggers(prompt) == negotiator
+
+
 # ------------------------------------------------------------------------- reading reports
 def test_a_background_launch_ack_is_not_a_verdict():
     gate = neg.NegotiationGate()

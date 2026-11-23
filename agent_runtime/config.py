@@ -6,6 +6,7 @@ robot tool layer over MCP stdio. The robot MCP server runs in a SEPARATE env (.v
 standing in for the robot's 3.9 env) with ROBOT_STUB=1 for the whole agent phase.
 """
 import os
+import re
 import shutil
 import urllib.request
 from pathlib import Path
@@ -129,9 +130,15 @@ def find_cli() -> str:
         f"  - Looked on PATH, at {', '.join(_CLI_FALLBACKS)}, and inside the SDK package.")
 
 
+_INCLUDE = re.compile(r"^<!-- include: (\S+) -->[ \t]*$", re.M)
+
+
 def read_steering(name: str) -> str:
-    """Read a steering file (behavior lives here, not in hardcoded branches)."""
-    return (STEERING_DIR / name).read_text()
+    """Read a steering file (behavior lives here, not in hardcoded branches). A line
+    `<!-- include: <path> -->` is replaced by that steering file, so text several architectures
+    must share word for word (steering/shared/friction_policy.md) lives in one place."""
+    text = (STEERING_DIR / name).read_text()
+    return _INCLUDE.sub(lambda m: read_steering(m.group(1)).rstrip("\n"), text)
 
 
 def robot_mcp_config(tool_log_path: Path, world_state_path: Path, scene: str | None = None) -> dict:

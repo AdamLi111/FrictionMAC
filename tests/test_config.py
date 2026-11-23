@@ -127,3 +127,10 @@ def test_the_robot_server_is_told_where_to_record_the_sensors(monkeypatch, tmp_p
     env = config.robot_mcp_config(tmp_path / "t", tmp_path / "w")["env"]
     assert env["SENSOR_LOG_PATH"] == str(tmp_path / "s.jsonl")
 
+
+def test_a_steering_include_is_replaced_by_the_included_file(tmp_path, monkeypatch):
+    (tmp_path / "shared").mkdir()
+    (tmp_path / "shared" / "part.md").write_text("## Shared\nsame words\n")
+    (tmp_path / "a.md").write_text("# A\n\n<!-- include: shared/part.md -->\n\n## After\n")
+    monkeypatch.setattr(config, "STEERING_DIR", tmp_path)
+    assert config.read_steering("a.md") == "# A\n\n## Shared\nsame words\n\n## After\n"

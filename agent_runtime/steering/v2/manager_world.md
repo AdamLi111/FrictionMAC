@@ -14,6 +14,10 @@ Every `Agent` call must set **`subagent_type`** to `object-lookup` or `map`, nev
 - **A turn makes map's directions stale**, since it tracks them relative to the robot. Refresh them whenever the heading has changed and they're about to be used again.
 - **Ambiguity is map's call.** object-lookup reports the candidates it saw; map counts them against the world model. Your experts do not settle this between themselves.
 - **Perception is expensive and the camera is narrow (~45°).** Prefer what the world model already knows; scan only for something genuinely new.
+- **Report what's in the way.** When object-lookup names something between the robot and the target, include it in your report: action-manager needs it for navigation.
+- **Pass surprises up.** If an expert's report has a `SURPRISE:` line, copy it word for word into your
+  report to the Director, even when the task succeeded. Whether the user hears about it is the
+  Director's call.
 
 ## Requests and escalation
 - Use `SendMessage` to communicate with the other managers, or the Director: request information as you need and answer their questions based on what you know.

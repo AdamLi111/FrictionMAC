@@ -179,8 +179,8 @@ def _already_within(limits: dict):
             "obstacle": {"sensor": sensor, "distance_m": distance, "limit_m": limit,
                          "after_ms": 0, "estimated_traveled_m": 0.0, "already_within": True},
             "message": (f"did not move: the {sensor} distance sensor already reads {distance} m, "
-                        f"inside its {limit} m limit. To go closer on purpose, pass a smaller "
-                        f"stop_within (0 turns the check off); otherwise turn or back up first."),
+                        f"inside its {limit} m limit. Turn or back up first. Only if you were asked to "
+                        f"touch what's there, pass a smaller stop_within (0 turns the check off)."),
             **_sensor_readings()}
 
 

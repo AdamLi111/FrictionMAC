@@ -2,9 +2,10 @@
 V5 — flat, no approval, plus a negotiator that decides when Misty slows down.
 
 V4's topology and experts, with one agent added and one decision moved to it. In V1–V4 the
-Director decides when to apply positive friction, from a generic sense of "ambiguity", and the
-friction agent only words the utterance. Here the **negotiator** judges every user turn, and every
-surprise an expert reports. It carries the friction ontology of İnan et al. (2025) and MAC's
+Director (V3: the single agent) decides when to apply positive friction, from the shared friction
+policy (steering/shared/friction_policy.md), unenforced, and the friction agent only words the
+utterance. Here a separate **negotiator**, with the same triggers, judges every user turn and
+every surprise an expert reports. It carries the friction ontology of İnan et al. (2025) and MAC's
 ambiguity checks (Acikgoz et al., 2025), and its VERDICT is enforced by
 agent_runtime/negotiation.py: nothing runs before a new user turn is judged, navigation waits
 while the negotiator is gathering or asking, and Misty asks once, then waits for the answer.

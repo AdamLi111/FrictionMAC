@@ -70,9 +70,9 @@ _V2_DESCRIPTIONS = {
                    "(capture_view) to reason about how to drive. Reports DONE or INFEASIBLE."),
     "expression": ("Conveys emotion/affect via arm, head, face-display and LED movements."),
     "regular-utterance": ("Speaks a NORMAL reply (confirmations, answers, status) directly."),
-    "friction": ("Speaks a POSITIVE-FRICTION utterance (clarify / reveal assumption / pause / "
-                 "etc.) directly, with the right friction_type; also voices user-facing "
-                 "clarifying questions escalated up the chain."),
+    "friction": ("Voices the POSITIVE-FRICTION move the Director chose (a question, a revealed "
+                 "assumption, a pause, ...) with its friction_type, passed on by "
+                 "dialogue-manager, and speaks it directly."),
 }
 
 
@@ -91,8 +91,9 @@ def build_agents_v4() -> dict:
     agents["regular-utterance"].description = (
         "Speaks a NORMAL reply (confirmations, answers, status) to the user directly.")
     agents["friction"].description = (
-        "Speaks a POSITIVE-FRICTION utterance (clarify / reveal assumption / pause / etc.) "
-        "directly, with the right friction_type; also voices user-facing clarifying questions.")
+        "Voices the POSITIVE-FRICTION move the Director chose (a question, a revealed "
+        "assumption, a pause, ...) with its friction_type, as one natural utterance, and speaks "
+        "it directly.")
     return agents
 
 
@@ -179,9 +180,9 @@ def build_agents() -> dict:
             model="inherit",
         ),
         "friction": AgentDefinition(
-            description=("Composes a POSITIVE-FRICTION utterance (clarify / reveal assumption "
-                         "/ pause / etc.) with the right friction_type. Proposes it to the "
-                         "Director; speaks only once approved."),
+            description=("Words the POSITIVE-FRICTION move the Director chose (a question, a "
+                         "revealed assumption, a pause, ...) with its friction_type. Proposes it "
+                         "to the Director; speaks only once approved."),
             prompt=config.read_steering("v1/friction.md"),
             tools=_rt("speak"),
             mcpServers=[config.ROBOT_SERVER],

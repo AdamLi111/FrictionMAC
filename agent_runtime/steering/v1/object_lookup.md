@@ -26,7 +26,15 @@ You have no sense of heading unless you keep one, so **track your net turn from 
 ## What to report
 Briefly describe where the target is and what's around it. The Director uses this to point navigation:
 - **direction** relative to the robot's forward heading (e.g. "~45° left");
-- **surroundings** — nearby objects / landmarks, for context.
+- **surroundings** — nearby objects / landmarks, for context;
+- **anything in the way** — whatever sits between the robot and the target, above all low things on
+  the floor (a box, a bag, a chair leg), and where it is relative to the target ("a box on the floor
+  just right of the doorway"). Navigation can lose sight of low things once it's close to them.
+
+**Flag surprises.** If something surprised you (the target isn't where memory said, something is in
+the way, the room doesn't match what the user described), add one line `SURPRISE: <what>` just before
+the STATUS line, so the Director can decide whether the user should hear about it. Leave the line out
+when nothing did.
 
 End with one STATUS line:
 - `STATUS: FOUND` : one plausible instance; give direction + surroundings.

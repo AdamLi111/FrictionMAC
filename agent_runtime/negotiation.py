@@ -2,9 +2,10 @@
 V5's negotiation protocol: the negotiator decides when Misty slows down, and the code holds the
 team to that decision.
 
-In V1–V4, positive friction is the Director's call: it judges "ambiguity" with no knowledge of
-friction, and the friction agent only words the utterance. V5 moves the decision to a negotiator
-agent that carries the friction ontology (steering/v5/negotiator.md). Steering can tell the
+In V1–V4, positive friction is the deciding agent's call (the Director; V3's single agent), made
+from the friction ontology and triggers in steering/shared/friction_policy.md, and nothing holds it
+to them; the friction agent only words the utterance. V5 moves the decision to a negotiator agent
+that carries the same ontology and triggers (steering/v5/negotiator.md). Steering can tell the
 Director to consult it, but cannot make it do so or obey the answer. So this module keeps a
 small per-session state machine, fed by SDK hooks, that holds the Director's delegations:
 
@@ -17,8 +18,10 @@ small per-session state machine, fed by SDK hooks, that holds the Director's del
     CLEAR     VERDICT: PROCEED                                 nothing
 
 A *surprise* is an expert's final STATUS that the plan didn't expect (object-lookup MULTIPLE /
-NOT_FOUND, map AMBIGUOUS / NONE, navigation INFEASIBLE). What the robot does about it is then the
-negotiator's call too: a checkpoint, not the Director's improvisation.
+NOT_FOUND, map AMBIGUOUS / NONE, navigation INFEASIBLE), or a `SURPRISE: <what>` line in an
+object-lookup or navigation report (something in the way, an obstacle stop, a detour), which they
+add even when the task succeeded. What the robot does about it is then the negotiator's call too: a
+checkpoint, not the Director's improvisation.
 
 The same hooks record the dialogue verbatim (each user utterance, everything Misty says) and
 append it to every negotiator brief, so its judgment never rests on the Director's paraphrase.
@@ -58,6 +61,11 @@ _TRIGGER = re.compile(_LINE_START + "TRIGGER" + _VALUE)
 _STATUS = re.compile(r"STATUS[\s:*_`]*([A-Z_]+)")
 _SURPRISES = {"MULTIPLE", "NOT_FOUND", "AMBIGUOUS", "NONE", "INFEASIBLE"}
 _SURPRISE_FROM = {"object-lookup", "map", "navigation"}
+# The line object-lookup and navigation add to a report when something surprised them, read
+# last-wins at the start of a line like the verdict fields. "SURPRISE: none" is no surprise.
+_SURPRISE_LINE = re.compile(_LINE_START + r"SURPRISE[\s*_`]*:[\s*_`]*(.*\S)")
+_FLAGGED_FROM = {"object-lookup", "navigation"}
+_NO_SURPRISE = {"", "none", "n/a", "no", "nothing"}
 
 _CLOCK = re.compile(r"^\s*\[clock [^\]]*\]\s*")      # session.stamp_command's header
 _LAUNCH_ACK = "Async agent launched successfully"   # a background launch, not a report
@@ -67,6 +75,12 @@ _MAX_LINE = 400                                     # chars of one utterance kep
 def _last(pattern, text: str) -> str | None:
     found = pattern.findall(text)
     return found[-1] if found else None
+
+
+def _flagged(text: str) -> str | None:
+    """What a report's `SURPRISE:` line says, or None when there is none (or it says none)."""
+    flag = (_last(_SURPRISE_LINE, text) or "").strip(" *_`.")
+    return flag[:120] if flag.lower() not in _NO_SURPRISE else None
 
 
 def _text_of(value) -> str:
@@ -133,10 +147,17 @@ class NegotiationGate:
         if agent == NEGOTIATOR:
             self._take_verdict(text)    # an empty report is an unreadable verdict: fails open
             return
+        if self.phase not in (CLEAR, GATHER):
+            return                      # judging already, or waiting on the user's answer
         status = _last(_STATUS, text)
-        if agent in _SURPRISE_FROM and status in _SURPRISES and self.phase in (CLEAR, GATHER):
+        if agent in _SURPRISE_FROM and status in _SURPRISES:
             self.why_judging = f"{agent}'s report (STATUS: {status})"
             self._enter(JUDGE, cause="checkpoint", agent=agent, status=status)
+            return
+        flag = _flagged(text) if agent in _FLAGGED_FROM else None
+        if flag:
+            self.why_judging = f"{agent}'s report (SURPRISE: {flag})"
+            self._enter(JUDGE, cause="checkpoint", agent=agent, surprise=flag)
 
     def consulting(self) -> None:
         """The negotiator is about to be consulted. Two earlier consults whose verdict never

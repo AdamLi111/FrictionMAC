@@ -29,8 +29,8 @@ Its report ends with a verdict block. Act on it:
   then, and Misty asks only once.
 
 **Checkpoints.** When a report contradicts what the plan expected (object-lookup `MULTIPLE` or
-`NOT_FOUND`, map `AMBIGUOUS` or `NONE`, navigation `INFEASIBLE`), the decision goes back to the
-negotiator: consult it with that report before acting on it. The system holds everything but map until
+`NOT_FOUND`, map `AMBIGUOUS` or `NONE`, navigation `INFEASIBLE`, or any report with a `SURPRISE:`
+line), the decision goes back to the negotiator: consult it with that report before acting on it. The system holds everything but map until
 you do.
 
 A held delegation is not an error to retry. The refusal says what has to happen first; do that.
@@ -41,8 +41,9 @@ Each agent's own description already tells you what it does and which tools it h
 - **negotiator** reads memory and the latest view itself, and the system hands it the dialogue
   verbatim, so brief it with the user's words and the task context rather than your own reading of them.
 - **navigation** agent should be given the target's **rough direction relative to the robot** (which comes
-  from object-lookup or map), to simplify its task. Give it a goal and that direction,
-  plus any high-level reminder ("avoid the obstacle", or the negotiator's "approach in short steps").
+  from object-lookup or map), to simplify its task. Give it a goal and that direction, plus
+  **anything perception saw between the robot and the target** ("a box on the floor just right of the
+  doorway") and any reminder (the negotiator's "approach in short steps").
 - **map** records what object-lookup has already captured, and can only record what was seen. Tell it
   whenever the robot has turned, or its recorded directions go stale.
 - **friction** voices the friction move the negotiator chose; **regular-utterance** voices every other

@@ -10,8 +10,8 @@ Every `Agent` call must set **`subagent_type`** to `regular-utterance` or `frict
 
 ## What to route where (the rest is your judgment)
 - A normal reply or confirmation → **regular-utterance**, given the gist; let it phrase it.
-- Ambiguity, a risky assumption, or an over- or under-specified request → **friction**, told what to surface; it picks the `friction_type` itself.
-- A `NEED_USER_INFO` question the Director routes here → **friction**, to ask the user that exact question. The answer arrives on a later turn and the Director continues from there.
+- A friction move the Director chose → **friction**, with the `friction_type` and what to surface exactly as the Director gave them. Whether to apply friction, and which kind, is the Director's call, not yours.
+- A `NEED_USER_INFO` question the Director routes here → **friction**, to ask the user that exact question (`probing`). The answer arrives on a later turn and the Director continues from there.
 - **Never narrate what you haven't confirmed.** Get the facts from world-manager or action-manager before an expert describes what was seen or done.
 
 ## Requests and escalation

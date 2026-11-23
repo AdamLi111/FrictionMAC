@@ -93,8 +93,9 @@ def _frame_content(b64: str, label: str):
 async def move_forward(distance: float = 1.0,
                        stop_within: float = tools.DEFAULT_STOP_WITHIN_M) -> dict:
     """Drive straight forward `distance` meters, stopping early if the front-centre distance
-    sensor sees something closer than `stop_within` meters (default 0.15; 0 turns this off, for
-    when you mean to touch what's ahead). The two angled front sensors mostly see what is beside
+    sensor sees something closer than `stop_within` meters (default 0.15; 0 turns this off).
+    Lower it only when you were asked to touch what's ahead: stopping short of a target is
+    arriving at it. The two angled front sensors mostly see what is beside
     your path, so they stop the robot only when something is within 0.06 m of them.
 
     Returns {"ok": true, "duration_ms": N, "distances_m": {...}} when the move completed;
