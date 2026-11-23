@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent log viewer</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11, 11, 11, 0.10); --wash: rgba(11, 11, 11, 0.04);
+    --k-delegate: #2a78d6; --k-speak: #eb6834; --k-report: #1baf7a; --k-message: #eda100; --k-ask: #e87ba4;
+    --good: #0ca30c; --critical: #d03b3b; --warning: #fab219; --focus: #2a78d6;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --grid: #2c2c2a;
+      --axis: #383835; --border: rgba(255, 255, 255, 0.10); --wash: rgba(255, 255, 255, 0.05);
+      --k-delegate: #3987e5; --k-speak: #d95926; --k-report: #199e70; --k-message: #c98500; --k-ask: #d55181;
+      --focus: #3987e5; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --grid: #2c2c2a;
+    --axis: #383835; --border: rgba(255, 255, 255, 0.10); --wash: rgba(255, 255, 255, 0.05);
+    --k-delegate: #3987e5; --k-speak: #d95926; --k-report: #199e70; --k-message: #c98500; --k-ask: #d55181;
+    --focus: #3987e5; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--surface);
+           border-bottom: 1px solid var(--border); padding: 10px 16px; display: flex;
+           flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+  h1 { font-size: 16px; margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px;
+          border-radius: 999px; border: 1px solid var(--border); color: var(--ink-2);
+          white-space: nowrap; font-size: 13px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .spacer { flex: 1; }
+  select { font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border);
+           border-radius: 8px; padding: 3px 6px; max-width: 320px; }
+  #info { padding: 8px 16px 0; color: var(--ink-2); display: flex; flex-wrap: wrap; gap: 4px 18px; }
+  #info b { color: var(--muted); font-weight: 500; }
+  .turns { display: flex; gap: 6px; padding: 10px 16px; overflow-x: auto; }
+  .turn { flex: none; border: 1px solid var(--border); background: var(--surface); border-radius: 10px;
+          padding: 6px 10px; text-align: left; max-width: 280px; }
+  .turn b { display: block; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .turn span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .turn[aria-pressed="true"] { border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); }
+  main { display: grid; gap: 14px; padding: 0 16px 24px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 1000px) {
+    main { grid-template-columns: minmax(0, 1fr) 300px; }
+    .wide { grid-column: 1 / -1; }
+  }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+          padding: 12px 14px; min-width: 0; }
+  h2 { font-size: 13px; margin: 0 0 8px; font-weight: 600; color: var(--ink-2);
+       text-transform: uppercase; letter-spacing: 0.04em; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2);
+            margin-bottom: 6px; }
+  .key { display: inline-block; width: 16px; height: 3px; border-radius: 2px; vertical-align: middle;
+         margin-right: 5px; }
+  #graphwrap { position: relative; overflow-x: auto; overflow-y: hidden; }
+  #graph { position: relative; }
+  #edges { position: absolute; left: 0; top: 0; overflow: visible; }
+  .node { position: absolute; width: 132px; border: 1px solid var(--axis); border-radius: 10px;
+          background: var(--surface); padding: 6px 6px 5px; text-align: center; transition: opacity .15s; }
+  .node.director { border-width: 2px; }
+  .node.user { border-style: dashed; }
+  .node.idle { opacity: 0.42; }
+  .node.focus { box-shadow: 0 0 0 3px var(--focus); }
+  .nname { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+  .nrole { font-size: 11px; color: var(--muted); }
+  .nmeta { font-size: 11px; color: var(--ink-2); min-height: 15px; }
+  .nbtns { display: flex; gap: 4px; justify-content: center; margin-top: 4px; }
+  .nbtns button, .sbtn { border: 1px solid var(--border); background: var(--wash); border-radius: 6px;
+                         padding: 1px 7px; font-size: 12px; }
+  .nbtns button[aria-pressed="true"], .sbtn[aria-pressed="true"] { background: var(--focus);
+                         border-color: var(--focus); color: #fff; }
+  .caption { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .side h3 { font-size: 13px; margin: 10px 0 4px; display: flex; justify-content: space-between;
+             gap: 6px; align-items: baseline; }
+  .side h3 small { color: var(--muted); font-weight: 400; }
+  .side .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .side .agent { padding: 4px 0 8px; border-bottom: 1px solid var(--grid); }
+  .side .agent.idle h3 { color: var(--muted); }
+  #opened { display: grid; gap: 10px; }
+  #opened:empty { display: none; }
+  .panel header { position: static; padding: 0 0 6px; border: 0; background: none; }
+  .panel h4 { margin: 0; font-size: 14px; }
+  .panel .close { margin-left: auto; border: 0; background: none; font-size: 18px; line-height: 1;
+                  color: var(--muted); }
+  .entry { border-top: 1px solid var(--grid); padding: 8px 0; }
+  .entry .meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px;
+                 color: var(--ink-2); margin-bottom: 4px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 7px; border-radius: 6px;
+          border: 1px solid var(--border); background: var(--wash); font-size: 12px; color: var(--ink); }
+  .num { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink-2); }
+  .kind { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-2); }
+  .flag { font-size: 11px; padding: 0 6px; border-radius: 5px; border: 1px solid var(--border);
+          color: var(--ink-2); }
+  .flag.bad { color: #fff; background: var(--critical); border-color: var(--critical); }
+  .text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 22em; overflow-y: auto;
+          background: var(--wash); border-radius: 8px; padding: 8px 10px; margin: 0; font: inherit; }
+  .result { margin-top: 6px; }
+  .result::before { content: "result"; display: block; font-size: 11px; color: var(--muted); }
+  .empty { color: var(--muted); padding: 6px 0; }
+  .seqbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 8px; }
+  .seqbar button { border: 1px solid var(--border); background: var(--wash); border-radius: 6px;
+                   min-width: 32px; padding: 2px 8px; }
+  .seqbar input[type=range] { flex: 1; min-width: 140px; }
+  .seqbar label { font-size: 12px; color: var(--ink-2); display: inline-flex; gap: 4px; align-items: center; }
+  #steps { list-style: none; margin: 0; padding: 0; }
+  .step { border-top: 1px solid var(--grid); }
+  .step > button { width: 100%; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto;
+                   gap: 8px; align-items: start; text-align: left; background: none; border: 0;
+                   padding: 7px 4px; }
+  .step.cur > button { background: var(--wash); box-shadow: inset 3px 0 0 var(--focus); }
+  .step .who { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+  .step .sum { color: var(--ink-2); display: block; white-space: nowrap; overflow: hidden;
+               text-overflow: ellipsis; margin-top: 2px; }
+  .step.minor .sum, .step.minor .who { color: var(--muted); }
+  .step time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .step .body { padding: 0 4px 10px 46px; }
+  .strip { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center;
+           font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums;
+           border-top: 1px solid var(--grid); padding-top: 6px; }
+  .strip b { color: var(--ink); }
+  .strip .v { display: inline-flex; align-items: center; gap: 5px; }
+  .strip .alert { color: #fff; background: var(--critical); border-radius: 5px; padding: 0 6px; }
+  .sdot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  #schartwrap { position: relative; }
+  #schart { width: 100%; height: 230px; display: block; }
+  #stip { position: absolute; pointer-events: none; background: var(--surface); color: var(--ink);
+          border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font-size: 12px;
+          box-shadow: 0 2px 8px rgba(0,0,0,.12); display: none; white-space: nowrap;
+          font-variant-numeric: tabular-nums; }
+  .readout { margin-top: 8px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .readout b { color: var(--ink); }
+  #notes { color: var(--muted); font-size: 12px; }
+  #notes p { margin: 4px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Agent log</h1>
+  <span class="pill" id="archpill" hidden></span>
+  <span class="pill"><span class="dot" id="livedot"></span><span id="live">connecting</span></span>
+  <span class="spacer"></span>
+  <label id="runwrap" hidden>Log <select id="run" aria-label="Which session or episode"></select></label>
+  <label id="followwrap" class="pill" hidden><input type="checkbox" id="follow"> follow the newest</label>
+  <div class="strip" id="strip" hidden aria-live="off"></div>
+</header>
+<div id="info"></div>
+<nav class="turns" id="turns" aria-label="Turns"></nav>
+
+<main>
+  <section class="card">
+    <h2 id="graphtitle">The team</h2>
+    <div class="legend" id="legend"></div>
+    <div id="graphwrap"><div id="graph"><svg id="edges"></svg></div></div>
+    <div class="caption">Arrows are this turn's messages, numbered in the order they happened (the
+      list below has every step). Faded agents weren't involved in this turn.</div>
+  </section>
+
+  <aside class="card side" aria-label="What each agent said and thought this turn">
+    <h2 id="sidetitle">This turn</h2>
+    <div id="side"></div>
+  </aside>
+
+  <section id="opened" class="wide" aria-live="polite"></section>
+
+  <section class="card wide" id="sensorcard" hidden>
+    <h2 id="sensortitle">Sensors during this turn</h2>
+    <div class="legend" id="slegend"></div>
+    <div id="schartwrap">
+      <svg id="schart" role="img" aria-label="Distance readings during this turn, with its steps marked"></svg>
+      <div id="stip"></div>
+    </div>
+    <div class="readout" id="sreadout"></div>
+  </section>
+
+  <section class="card wide">
+    <h2>What happened, in order</h2>
+    <div class="seqbar">
+      <button id="prev" type="button" aria-label="Previous step">◀</button>
+      <button id="play" type="button" aria-label="Play the steps">▶ play</button>
+      <button id="next" type="button" aria-label="Next step">▶</button>
+      <input id="scrub" type="range" min="0" max="0" value="0" aria-label="Step">
+      <span id="pos" class="num"></span>
+      <label><input type="checkbox" id="showthink" checked> reasoning</label>
+      <label><input type="checkbox" id="showtools" checked> robot actions</label>
+    </div>
+    <ol id="steps"></ol>
+  </section>
+
+  <section id="notes" class="wide"></section>
+</main>
+
+<script>
+"use strict";
+const KINDS = {
+  ask:      {label: "user asks",   color: "var(--k-ask)"},
+  delegate: {label: "delegates",   color: "var(--k-delegate)"},
+  message:  {label: "messages",    color: "var(--k-message)"},
+  report:   {label: "reports back", color: "var(--k-report)"},
+  speak:    {label: "says to the user", color: "var(--k-speak)"},
+};
+const MINOR = {think: "thinking", note: "note", tool: "robot action", end: "finished"};
+const OUTPUT_KINDS = new Set(["delegate", "message", "report", "speak", "tool"]);
+const REASON_KINDS = new Set(["think", "note"]);
+const NODE_W = 132, NODE_H = 74, COL = 152, ROW = 128, PAD = 18;
+const NS = "http://www.w3.org/2000/svg";
+const $ = id => document.getElementById(id);
+const st = {model: null, turn: null, pickedTurn: false, open: [], cursor: 0, playing: null,
+            expanded: new Set(), runId: null, stream: null, follow: false};
+
+// ------------------------------------------------------------------------- small helpers
+function el(tag, attrs, ...kids) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") node.className = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else if (v !== null && v !== undefined && v !== false) node.setAttribute(k, v);
+  }
+  for (const kid of kids.flat(Infinity)) if (kid !== null && kid !== undefined && kid !== false) node.append(kid);
+  return node;
+}
+function svg(tag, attrs, parent) {
+  const node = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
+  if (parent) parent.appendChild(node);
+  return node;
+}
+const nice = name => name === "director" ? "Director" : name === "user" ? "User"
+  : name === "robot" ? "robot" : name === "?" ? "an agent the log doesn't name" : name;
+const chip = name => el("span", {class: "chip"}, nice(name));
+function kindTag(kind) {
+  const k = KINDS[kind];
+  if (!k) return el("span", {class: "kind"}, MINOR[kind] || kind);
+  return el("span", {class: "kind"}, el("span", {class: "key", style: `background:${k.color}`}), k.label);
+}
+function clock(t, turn) {
+  if (!t || !turn || !turn.t) return "";
+  const s = Math.max(0, t - turn.t);
+  return s < 60 ? `+${s.toFixed(1)}s` : `+${Math.floor(s / 60)}m${String(Math.round(s % 60)).padStart(2, "0")}s`;
+}
+function turnObj() { return st.model && st.model.turns.find(t => t.n === st.turn) || null; }
+function steps() { const t = turnObj(); return t ? t.steps : []; }
+
+// ------------------------------------------------------------------------- the team (layout)
+function team(model) {
+  const parent = Object.assign({}, model.hierarchy || {});
+  const kids = {director: []};
+  const order = Object.keys(parent);
+  for (const c of order) {
+    let p = parent[c] || "director";
+    if (p !== "director" && !(p in parent)) { parent[p] = "director"; order.push(p); }
+  }
+  for (const c of order) { kids[c] = kids[c] || []; (kids[parent[c]] = kids[parent[c]] || []).push(c); }
+  const pos = {}; let slot = 0;
+  (function place(n, depth) {
+    const ch = kids[n] || [];
+    if (!ch.length) pos[n] = {x: slot++, depth};
+    else { ch.forEach(c => place(c, depth + 1)); pos[n] = {x: ch.reduce((a, c) => a + pos[c].x, 0) / ch.length, depth}; }
+  })("director", 0);
+  if (slot === 0) pos.director = {x: 0, depth: 0};
+  pos.user = {x: pos.director.x - 1.45, depth: 0};
+  const minX = Math.min(...Object.values(pos).map(p => p.x));
+  const maxX = Math.max(...Object.values(pos).map(p => p.x));
+  const maxD = Math.max(...Object.values(pos).map(p => p.depth));
+  for (const p of Object.values(pos)) { p.left = PAD + (p.x - minX) * COL; p.top = PAD + p.depth * ROW; }
+  const role = n => n === "user" ? "user" : n === "director" ? "Director"
+    : (kids[n] || []).length ? "manager" : "expert";
+  const names = ["user", "director"];
+  (function walk(n) { for (const c of kids[n] || []) { names.push(c); walk(c); } })("director");
+  return {pos, kids, parent, role, names, width: PAD * 2 + (maxX - minX) * COL + NODE_W,
+          height: PAD * 2 + maxD * ROW + NODE_H};
+}
+
+// per-agent tallies for the current turn
+function tally(name) {
+  const out = [], why = [];
+  let involved = false;
+  for (const s of steps()) {
+    if (s.from === name || s.to === name || s.agent === name) involved = true;
+    if (name === "user" && s.kind === "ask") out.push(s);
+    else if (s.from === name && OUTPUT_KINDS.has(s.kind)) out.push(s);
+    if (s.agent === name && REASON_KINDS.has(s.kind)) why.push(s);
+  }
+  return {out, why, involved};
+}
+
+// ------------------------------------------------------------------------- render
+function render() {
+  const m = st.model;
+  if (!m) return;
+  $("title").textContent = m.title || "Agent log";
+  document.title = (m.title || "Agent log") + " · agent log";
+  $("archpill").hidden = !m.arch;
+  $("archpill").textContent = m.arch ? `architecture ${m.arch}` : "";
+  renderInfo(m); renderTurns(m); renderGraph(m); renderSide(m); renderOpened(); renderSteps();
+  renderStrip(); renderSensorChart();
+  $("notes").replaceChildren(...(m.notes || []).map(n => el("p", {}, n)),
+    el("p", {}, `Source: ${m.run}${m.files && m.files.length ? " — " + m.files.join(", ") : ""}`));
+}
+
+function renderInfo(m) {
+  const box = $("info");
+  box.replaceChildren();
+  for (const [k, v] of Object.entries(m.fields || {})) {
+    if (k === "architecture") continue;
+    box.append(el("span", {}, el("b", {}, k + ": "), String(v)));
+  }
+}
+
+function renderTurns(m) {
+  const nav = $("turns");
+  nav.replaceChildren();
+  if (!m.turns.length) { nav.append(el("span", {class: "empty"}, "No turns yet.")); return; }
+  for (const t of m.turns) {
+    nav.append(el("button", {class: "turn", type: "button", "aria-pressed": String(t.n === st.turn),
+      title: t.user, onclick: () => pickTurn(t.n, true)},
+      el("b", {}, `Turn ${t.n}${t.clock ? " · " + t.clock : ""}${t.silent ? " · no reply" : ""}`),
+      el("span", {}, t.user || "(no user text)")));
+  }
+}
+
+function pickTurn(n, byUser) {
+  st.turn = n; st.cursor = 0; st.expanded.clear();
+  if (byUser) st.pickedTurn = n !== (st.model.turns.at(-1) || {}).n;
+  stopPlay(); render();
+}
+
+function renderGraph(m) {
+  const T = team(m), graph = $("graph"), edges = $("edges");
+  $("graphtitle").textContent = `The team · turn ${st.turn ?? "–"}`;
+  graph.style.width = T.width + "px"; graph.style.height = T.height + "px";
+  edges.setAttribute("width", T.width); edges.setAttribute("height", T.height);
+  edges.replaceChildren();
+  graph.querySelectorAll(".node").forEach(n => n.remove());
+  const defs = svg("defs", {}, edges);
+  for (const [kind, k] of Object.entries(KINDS)) {
+    const mk = svg("marker", {id: "arrow-" + kind, viewBox: "0 0 10 10", refX: 9, refY: 5,
+      markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse"}, defs);
+    svg("path", {d: "M0,0 L10,5 L0,10 z", fill: k.color}, mk);
+  }
+  // the hierarchy, faint
+  const center = n => ({x: T.pos[n].left + NODE_W / 2, y: T.pos[n].top + NODE_H / 2});
+  for (const [c, p] of Object.entries(T.parent)) {
+    if (!T.pos[c] || !T.pos[p]) continue;
+    svg("line", {x1: center(p).x, y1: T.pos[p].top + NODE_H, x2: center(c).x, y2: T.pos[c].top,
+                 stroke: "var(--grid)", "stroke-width": 2}, edges);
+  }
+  // this turn's messages, grouped by who -> whom and kind
+  const groups = new Map();
+  for (const s of steps()) {
+    if (!KINDS[s.kind] || !T.pos[s.from] || !T.pos[s.to] || s.from === s.to) continue;
+    const key = `${s.from}>${s.to}>${s.kind}`;
+    if (!groups.has(key)) groups.set(key, {from: s.from, to: s.to, kind: s.kind, nums: []});
+    groups.get(key).nums.push(s.i);
+  }
+  const pairCount = new Map();
+  for (const g of groups.values()) {
+    const pk = [g.from, g.to].sort().join("|");
+    pairCount.set(pk, (pairCount.get(pk) || 0) + 1);
+  }
+  const pairSeen = new Map();
+  const cur = steps().find(s => s.i === st.cursor);
+  for (const g of groups.values()) {
+    const pk = [g.from, g.to].sort().join("|");
+    const k = pairSeen.get(pk) || 0; pairSeen.set(pk, k + 1);
+    const n = pairCount.get(pk);
+    const a = center(g.from), b = center(g.to);
+    const flip = g.from < g.to ? 1 : -1;                     // same pair, both ways: bend apart
+    const bend = (n === 1 ? 22 : (k - (n - 1) / 2) * 34 + 14) * flip;
+    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;
+    const cx = (a.x + b.x) / 2 + nx * bend, cy = (a.y + b.y) / 2 + ny * bend;
+    const clip = (p, q) => {               // where the line from p toward q leaves p's box
+      const hx = NODE_W / 2 + 4, hy = NODE_H / 2 + 4, ux = q.x - p.x, uy = q.y - p.y;
+      const s = Math.min(Math.abs(hx / (ux || 1e-9)), Math.abs(hy / (uy || 1e-9)));
+      return {x: p.x + ux * s, y: p.y + uy * s};
+    };
+    const s0 = clip(a, {x: cx, y: cy}), s1 = clip(b, {x: cx, y: cy});
+    const hot = cur && g.nums.includes(cur.i);
+    const dim = cur && KINDS[cur.kind] && !hot;
+    const path = svg("path", {d: `M${s0.x},${s0.y} Q${cx},${cy} ${s1.x},${s1.y}`, fill: "none",
+      stroke: KINDS[g.kind].color, "stroke-width": hot ? 4 : 2, "stroke-linecap": "round",
+      "marker-end": `url(#arrow-${g.kind})`, opacity: dim ? 0.25 : 1}, edges);
+    const title = svg("title", {}, path);
+    title.textContent = `${nice(g.from)} ${KINDS[g.kind].label} ${nice(g.to)}: step ${g.nums.join(", ")}`;
+    const mx = 0.25 * s0.x + 0.5 * cx + 0.25 * s1.x, my = 0.25 * s0.y + 0.5 * cy + 0.25 * s1.y;
+    const label = g.nums.length > 4 ? g.nums.slice(0, 3).join(", ") + ` +${g.nums.length - 3}` : g.nums.join(", ");
+    const w = 8 + label.length * 6.6;
+    svg("rect", {x: mx - w / 2, y: my - 9, width: w, height: 18, rx: 6, fill: "var(--surface)",
+                 stroke: KINDS[g.kind].color, "stroke-width": hot ? 2 : 1, opacity: dim ? 0.4 : 1}, edges);
+    const t = svg("text", {x: mx, y: my + 4, "text-anchor": "middle", "font-size": 11, fill: "var(--ink)",
+                           "font-weight": hot ? 700 : 500, opacity: dim ? 0.5 : 1}, edges);
+    t.textContent = label;
+  }
+  // the agents
+  for (const name of T.names) {
+    const p = T.pos[name];
+    if (!p) continue;
+    const {out, why, involved} = tally(name);
+    const robot = out.filter(s => s.kind === "tool").length;
+    const meta = name === "user" ? (involved ? "gave input" : "")
+      : !involved ? "not involved" : [out.length - robot ? `${out.length - robot} out` : "",
+          robot ? `${robot} action${robot > 1 ? "s" : ""}` : "", why.length ? `${why.length} thought${why.length > 1 ? "s" : ""}` : ""]
+          .filter(Boolean).join(" · ") || "involved";
+    const isCur = cur && (cur.from === name || cur.agent === name || (KINDS[cur.kind] && cur.to === name));
+    const buttons = name === "user"
+      ? [panelButton("user:input", "input")]
+      : [panelButton(name + ":output", "output"), panelButton(name + ":reasoning", "reasoning")];
+    graph.append(el("div", {class: `node ${name === "director" ? "director" : ""} ${name === "user" ? "user" : ""} ${involved ? "" : "idle"} ${isCur ? "focus" : ""}`,
+      style: `left:${p.left}px;top:${p.top}px`},
+      el("div", {class: "nname"}, nice(name)), el("div", {class: "nrole"}, T.role(name)),
+      el("div", {class: "nmeta"}, meta), el("div", {class: "nbtns"}, buttons)));
+  }
+}
+
+function panelButton(key, label) {
+  return el("button", {type: "button", "aria-pressed": String(st.open.includes(key)),
+                       onclick: () => togglePanel(key)}, label);
+}
+
+function togglePanel(key) {
+  const at = st.open.indexOf(key);
+  if (at >= 0) st.open.splice(at, 1); else st.open.push(key);
+  render();
+  if (at < 0) {
+    const node = document.querySelector(`[data-panel="${CSS.escape(key)}"]`);
+    if (node) node.scrollIntoView({behavior: "smooth", block: "nearest"});
+  }
+}
+
+function renderSide(m) {
+  const T = team(m), box = $("side");
+  $("sidetitle").textContent = `Turn ${st.turn ?? "–"}: who said and thought what`;
+  box.replaceChildren();
+  const user = tally("user");
+  box.append(el("div", {class: "agent"}, el("h3", {}, "User", el("small", {}, user.out.length ? "" : "no input")),
+    el("div", {class: "row"}, el("button", {class: "sbtn", type: "button", "aria-pressed": String(st.open.includes("user:input")),
+      onclick: () => togglePanel("user:input")}, "User input"))));
+  for (const name of T.names.slice(1)) {
+    const {out, why, involved} = tally(name);
+    box.append(el("div", {class: `agent ${involved ? "" : "idle"}`},
+      el("h3", {}, nice(name), el("small", {}, involved ? T.role(name) : "not involved")),
+      el("div", {class: "row"},
+        el("button", {class: "sbtn", type: "button", "aria-pressed": String(st.open.includes(name + ":output")),
+          onclick: () => togglePanel(name + ":output")}, `Output (${out.length})`),
+        el("button", {class: "sbtn", type: "button", "aria-pressed": String(st.open.includes(name + ":reasoning")),
+          onclick: () => togglePanel(name + ":reasoning")}, `Reasoning (${why.length})`))));
+  }
+}
+
+function stepBody(s) {
+  const parts = [];
+  const flags = [];
+  if (s.background) flags.push(el("span", {class: "flag"}, "in the background"));
+  if (s.error) flags.push(el("span", {class: "flag bad"}, "refused or failed"));
+  if (s.kind === "speak" && s.friction && s.friction !== "none") flags.push(el("span", {class: "flag"}, `friction: ${s.friction}`));
+  if (s.guessed) flags.push(el("span", {class: "flag"}, "speaker inferred"));
+  if (s.source === "hooks") flags.push(el("span", {class: "flag"}, "from the hook log"));
+  if (s.title && s.kind !== "tool") parts.push(el("div", {class: "meta"}, el("b", {}, s.title)));
+  if (flags.length) parts.push(el("div", {class: "meta"}, flags));
+  parts.push(el("pre", {class: "text"}, s.text || "(empty)"));
+  if (s.result) parts.push(el("pre", {class: "text result"}, s.result));
+  return parts;
+}
+
+function renderOpened() {
+  const box = $("opened");
+  box.replaceChildren();
+  const T = st.model ? team(st.model) : null;
+  for (const key of st.open) {
+    const [name, what] = key.split(":");
+    if (T && name !== "user" && !T.pos[name]) continue;
+    const {out, why, involved} = tally(name);
+    const list = what === "reasoning" ? why : out;
+    const head = what === "input" ? "User input" : `${nice(name)} — ${what}`;
+    const entries = list.map(s => el("div", {class: "entry"},
+      el("div", {class: "meta"}, el("span", {class: "num"}, `#${s.i}`),
+        KINDS[s.kind] || s.kind === "tool" ? [kindTag(s.kind), s.to ? ["→", chip(s.to)] : null] : kindTag(s.kind),
+        el("time", {}, clock(s.t, turnObj()))),
+      stepBody(s)));
+    const empty = what === "input" ? "No user input in this turn."
+      : !involved ? `${nice(name)} wasn't involved in turn ${st.turn}.`
+      : what === "reasoning" ? `No reasoning from ${nice(name)} is recorded for turn ${st.turn}.`
+      : `${nice(name)} sent nothing in turn ${st.turn}.`;
+    box.append(el("section", {class: "card panel", "data-panel": key},
+      el("header", {}, el("h4", {}, `${head} · turn ${st.turn}`),
+        el("button", {class: "close", type: "button", "aria-label": "Close", onclick: () => togglePanel(key)}, "×")),
+      entries.length ? entries : el("div", {class: "empty"}, empty)));
+  }
+}
+
+function visibleSteps() {
+  return steps().filter(s => ($("showthink").checked || !REASON_KINDS.has(s.kind))
+                          && ($("showtools").checked || (s.kind !== "tool" && s.kind !== "end")));
+}
+
+function renderSteps() {
+  const list = $("steps"), vis = visibleSteps(), turn = turnObj();
+  list.replaceChildren();
+  $("scrub").max = String(vis.length);
+  const at = vis.findIndex(s => s.i === st.cursor);
+  $("scrub").value = String(at + 1);
+  $("pos").textContent = vis.length ? `${Math.max(at + 1, 0)} / ${vis.length}` : "";
+  if (!vis.length) { list.append(el("li", {class: "empty"}, turn ? "Nothing recorded in this turn yet." : "Pick a turn.")); return; }
+  for (const s of vis) {
+    const minor = !KINDS[s.kind];
+    const who = KINDS[s.kind] || s.kind === "tool"
+      ? [chip(s.from || s.agent), s.to ? ["→", chip(s.to)] : null, kindTag(s.kind)]
+      : [chip(s.agent || s.from), kindTag(s.kind)];
+    const summary = (s.kind === "tool" ? s.title : (s.title ? s.title + " — " : "") + (s.text || "")).replace(/\s+/g, " ").slice(0, 220);
+    const open = st.expanded.has(s.i);
+    list.append(el("li", {class: `step ${minor ? "minor" : ""} ${s.i === st.cursor ? "cur" : ""}`, id: "step-" + s.i},
+      el("button", {type: "button", "aria-expanded": String(open), onclick: () => {
+          if (st.expanded.has(s.i) && st.cursor === s.i) st.expanded.delete(s.i); else st.expanded.add(s.i);
+          st.cursor = s.i; stopPlay(); render(); }},
+        el("span", {class: "num"}, `#${s.i}`),
+        el("span", {}, el("span", {class: "who"}, who), el("span", {class: "sum"}, summary)),
+        el("time", {}, clock(s.t, turn))),
+      open ? el("div", {class: "body"}, stepBody(s)) : null));
+  }
+}
+
+// ------------------------------------------------------------------------- playback
+function moveCursor(delta) {
+  const vis = visibleSteps();
+  if (!vis.length) return;
+  let at = vis.findIndex(s => s.i === st.cursor);
+  at = Math.min(vis.length - 1, Math.max(0, at + delta));
+  st.cursor = vis[at].i;
+  render();
+  const row = $("step-" + st.cursor);
+  if (row) row.scrollIntoView({block: "nearest"});
+}
+function stopPlay() { if (st.playing) { clearInterval(st.playing); st.playing = null; } $("play").textContent = "▶ play"; }
+$("prev").addEventListener("click", () => { stopPlay(); moveCursor(-1); });
+$("next").addEventListener("click", () => { stopPlay(); moveCursor(1); });
+$("play").addEventListener("click", () => {
+  if (st.playing) { stopPlay(); return; }
+  const vis = visibleSteps();
+  if (vis.length && st.cursor === vis.at(-1).i) st.cursor = 0;
+  $("play").textContent = "❚❚ pause";
+  st.playing = setInterval(() => {
+    const v = visibleSteps();
+    if (!v.length || st.cursor === v.at(-1).i) { stopPlay(); return; }
+    moveCursor(1);
+  }, 1300);
+});
+$("scrub").addEventListener("input", e => {
+  stopPlay();
+  const vis = visibleSteps(), k = Number(e.target.value);
+  st.cursor = k > 0 && vis[k - 1] ? vis[k - 1].i : 0;
+  render();
+});
+$("showthink").addEventListener("change", render);
+$("showtools").addEventListener("change", render);
+$("legend").append(...Object.values(KINDS).map(k => el("span", {}, el("span", {class: "key", style: `background:${k.color}`}), k.label)));
+
+// ------------------------------------------------------------------------- sensors
+const RANGE = [["front_left", "FL", "var(--s1)"], ["front_center", "FC", "var(--s2)"],
+               ["front_right", "FR", "var(--s3)"], ["back", "BK", "var(--s4)"]];
+const CORNERS = ["front_left", "front_right", "rear_left", "rear_right"];
+const MAX_AGE = 1.0, STOP_LINE = 0.15, YMAX = 1.3;
+let sens = null;
+function resetSensors() {
+  sens = {range: {}, ledge: {}, bumpRows: [], bumps: [], drops: [], ledgeNow: {}, pressed: {}, lastT: 0};
+  for (const [k] of RANGE) sens.range[k] = [];
+  for (const c of CORNERS) sens.ledge[c] = [];
+}
+resetSensors();
+
+function addSensorRows(rows) {
+  for (const r of rows) {
+    sens.lastT = Math.max(sens.lastT, r.t);
+    if (r.k === "range" && sens.range[r.s]) {
+      sens.range[r.s].push([r.t, r.ok ? r.d : null]);
+    } else if (r.k === "ledge" && sens.ledge[r.s]) {
+      const before = sens.ledgeNow[r.s];
+      if (r.drop && !(before && before.drop)) sens.drops.push({t: r.t, s: r.s});
+      sens.ledgeNow[r.s] = r;
+      sens.ledge[r.s].push([r.t, r.d, r.drop]);
+    } else if (r.k === "bump") {
+      sens.pressed[r.s] = r.on;
+      sens.bumpRows.push(r);                       // presses and releases, for "pressed at t"
+      if (r.on) sens.bumps.push({t: r.t, s: r.s}); // presses, for the marks on the chart
+    }
+  }
+}
+
+// the last sample at or before t (binary search), or null
+function at(series, t) {
+  let lo = 0, hi = series.length - 1, best = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (series[mid][0] <= t) { best = series[mid]; lo = mid + 1; } else hi = mid - 1;
+  }
+  return best;
+}
+function rangeAt(key, t) {
+  const s = at(sens.range[key], t);
+  if (!s || t - s[0] > MAX_AGE) return "no data";
+  return s[1] === null ? "none" : s[1];
+}
+function ledgeAt(c, t) {
+  const s = at(sens.ledge[c], t);
+  if (!s || t - s[0] > MAX_AGE) return "no data";
+  return s[2] ? "DROP" : "floor";
+}
+function pressedAt(t) {
+  const state = {};
+  for (const b of sens.bumpRows) if (b.t <= t) state[b.s] = b.on;
+  return CORNERS.filter(c => state[c]);
+}
+const fmtD = v => typeof v === "number" ? v.toFixed(2) + " m" : v;
+function levelDot(v) {
+  const color = typeof v !== "number" ? "var(--muted)" : v < STOP_LINE ? "var(--critical)"
+    : v < 0.5 ? "var(--warning)" : "var(--good)";
+  return el("span", {class: "sdot", style: `background:${color}`});
+}
+
+function hasSensors() { return sens.lastT > 0 || (st.model && st.model.sensors); }
+
+function renderStrip() {
+  const strip = $("strip");
+  strip.hidden = !hasSensors();
+  if (strip.hidden) return;
+  const now = Date.now() / 1000, live = st.model && !st.model.ended;
+  const t = live ? now : sens.lastT;
+  const age = sens.lastT ? now - sens.lastT : null;
+  const parts = [el("b", {}, live ? "Sensors (live)" : "Sensors (end of session)")];
+  for (const [k, short] of RANGE) {
+    const v = rangeAt(k, t);
+    parts.push(el("span", {class: "v"}, levelDot(v), `${short} ${fmtD(v)}`));
+  }
+  const drops = CORNERS.filter(c => ledgeAt(c, t) === "DROP");
+  parts.push(drops.length ? el("span", {class: "v alert"}, `ledge DROP: ${drops.join(", ")}`)
+                          : el("span", {class: "v"}, "ledges: floor"));
+  const pressed = CORNERS.filter(c => sens.pressed[c]);
+  parts.push(pressed.length ? el("span", {class: "v alert"}, `bumper pressed: ${pressed.join(", ")}`)
+                            : el("span", {class: "v"}, "bumpers: free"));
+  if (live) {
+    parts.push(el("span", {class: age !== null && age > 2 ? "v alert" : "v"},
+      age === null ? "no readings yet" : age > 2 ? `no readings for ${age.toFixed(0)} s` : `${age.toFixed(1)} s ago`));
+  }
+  strip.replaceChildren(...parts);
+}
+
+function turnWindow() {
+  const m = st.model, turn = turnObj();
+  if (!m || !turn) return null;
+  const idx = m.turns.indexOf(turn);
+  const next = m.turns[idx + 1];
+  let t0 = turn.t || (turn.steps.find(s => s.t) || {}).t;
+  if (!t0) return null;
+  let t1 = next && next.t ? next.t : (!m.ended && idx === m.turns.length - 1 ? Date.now() / 1000
+          : Math.max(sens.lastT, ...turn.steps.map(s => s.t || 0)));
+  if (t1 - t0 < 2) t1 = t0 + 2;
+  return [t0 - 0.5, t1];
+}
+
+let sHover = null;
+function renderSensorChart() {
+  const card = $("sensorcard");
+  card.hidden = !hasSensors();
+  if (card.hidden) return;
+  const win = turnWindow(), chart = $("schart"), tip = $("stip");
+  $("sensortitle").textContent = `Sensors during turn ${st.turn ?? "–"}`;
+  chart.replaceChildren();
+  if (!win) { $("sreadout").textContent = "This turn has no times to line the readings up with."; return; }
+  const [t0, t1] = win;
+  const W = chart.clientWidth || 700, H = chart.clientHeight || 230;
+  const M = {left: 44, right: 78, top: 18, bottom: 34};
+  chart.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const x = t => M.left + (W - M.left - M.right) * (t - t0) / (t1 - t0);
+  const y = v => H - M.bottom - (H - M.top - M.bottom) * Math.min(v, YMAX) / YMAX;
+  for (const v of [0, 0.5, 1.0]) {
+    svg("line", {x1: M.left, x2: W - M.right, y1: y(v), y2: y(v), stroke: v ? "var(--grid)" : "var(--axis)", "stroke-width": 1}, chart);
+    svg("text", {x: M.left - 6, y: y(v) + 4, "text-anchor": "end", "font-size": 11, fill: "var(--muted)"}, chart).textContent = v.toFixed(1) + " m";
+  }
+  svg("line", {x1: M.left, x2: W - M.right, y1: y(STOP_LINE), y2: y(STOP_LINE), stroke: "var(--critical)", "stroke-width": 1}, chart);
+  svg("text", {x: M.left + 4, y: y(STOP_LINE) - 4, "font-size": 11, fill: "var(--muted)"}, chart).textContent = "stop 0.15 m";
+  const span = t1 - t0, step = span > 120 ? 30 : span > 40 ? 10 : span > 12 ? 5 : 1;
+  const turnStart = turnObj().t || t0;
+  for (let s = Math.ceil((t0 - turnStart) / step) * step; turnStart + s <= t1; s += step) {
+    if (turnStart + s < t0) continue;
+    svg("text", {x: x(turnStart + s), y: H - 18, "text-anchor": "middle", "font-size": 11, fill: "var(--muted)"}, chart).textContent = `+${s}s`;
+  }
+  // the turn's steps that act on the world or pass a message, as numbered marks
+  const cur = steps().find(s => s.i === st.cursor);
+  for (const s of steps()) {
+    if (!s.t || s.t < t0 || s.t > t1 || !(KINDS[s.kind] || s.kind === "tool")) continue;
+    const hot = cur && cur.i === s.i;
+    svg("line", {x1: x(s.t), x2: x(s.t), y1: M.top, y2: H - M.bottom, stroke: hot ? "var(--focus)" : "var(--grid)",
+                 "stroke-width": hot ? 2 : 1}, chart);
+    svg("text", {x: x(s.t), y: M.top - 5, "text-anchor": "middle", "font-size": 10,
+                 fill: hot ? "var(--ink)" : "var(--muted)", "font-weight": hot ? 700 : 400}, chart).textContent = s.i;
+  }
+  // the four distances (a gap where the sensor trusted no reading)
+  const ends = [];
+  for (const [k, short, color] of RANGE) {
+    let d = "", pen = false, last = null, prevT = null;
+    for (const [t, v] of sens.range[k]) {
+      if (t < t0 - 1 || t > t1) continue;
+      if (v === null || (prevT !== null && t - prevT > MAX_AGE * 2)) pen = false;
+      prevT = t;
+      if (v === null) continue;
+      d += `${pen ? "L" : "M"}${x(Math.max(t, t0)).toFixed(1)},${y(v).toFixed(1)}`;
+      pen = true; last = [t, v];
+    }
+    if (d) svg("path", {d, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round"}, chart);
+    if (last && t1 - last[0] < 3) ends.push({short, color, px: x(last[0]), py: y(last[1]), v: last[1]});
+  }
+  ends.sort((a, b) => a.py - b.py);
+  let floor = -Infinity;
+  for (const e of ends) {
+    svg("circle", {cx: e.px, cy: e.py, r: 4, fill: e.color, stroke: "var(--surface)", "stroke-width": 2}, chart);
+    const ly = Math.max(e.py + 4, floor + 13); floor = ly;
+    svg("text", {x: W - M.right + 8, y: ly, "font-size": 11, fill: "var(--ink-2)"}, chart).textContent = `${e.short} ${e.v.toFixed(2)}`;
+  }
+  // bumps along the bottom, ledge drops on a row of their own just above
+  const SHORT = {front_left: "FL", front_right: "FR", rear_left: "RL", rear_right: "RR"};
+  for (const [list, label, lift] of [[sens.bumps, "bump", 0], [sens.drops, "drop", 13]]) {
+    for (const ev of list) {
+      if (ev.t < t0 || ev.t > t1) continue;
+      const base = H - M.bottom + 1 - lift;
+      svg("path", {d: `M${x(ev.t) - 5},${base} l5,-9 l5,9 z`, fill: "var(--critical)"}, chart);
+      const tx = svg("text", {x: x(ev.t) + 7, y: base - 1, "font-size": 10, fill: "var(--ink-2)"}, chart);
+      tx.textContent = `${label} ${SHORT[ev.s] || ev.s}`;
+    }
+  }
+  // the readout: at the selected step, else at the hover, else the latest
+  const when = sHover !== null ? sHover : cur && cur.t ? cur.t : Math.min(t1, sens.lastT || t1);
+  const label = sHover !== null ? `At +${(when - turnStart).toFixed(1)}s`
+    : cur && cur.t ? `At step #${cur.i}${cur.tool ? " " + cur.tool : ""} (+${(cur.t - turnStart).toFixed(1)}s)` : "Latest in this turn";
+  const pressed = pressedAt(when);
+  $("sreadout").replaceChildren(el("b", {}, label + ": "),
+    RANGE.map(([k, short]) => `${short} ${fmtD(rangeAt(k, when))}`).join(" · "),
+    " · ledges: " + (CORNERS.map(c => ledgeAt(c, when)).includes("DROP")
+      ? CORNERS.filter(c => ledgeAt(c, when) === "DROP").map(c => "DROP " + c).join(", ") : "floor"),
+    " · bumpers: " + (pressed.length ? pressed.join(", ") + " pressed" : "free"));
+  if (sHover !== null) {
+    svg("line", {x1: x(sHover), x2: x(sHover), y1: M.top, y2: H - M.bottom, stroke: "var(--axis)", "stroke-width": 1}, chart);
+    tip.replaceChildren(el("div", {style: "color:var(--muted)"}, `+${(sHover - turnStart).toFixed(1)}s`),
+      ...RANGE.map(([k, short, color]) => el("div", {}, el("span", {class: "key", style: `background:${color}`}), `${short} ${fmtD(rangeAt(k, sHover))}`)));
+    tip.style.display = "block";
+    tip.style.left = Math.min(x(sHover) + 12, W - 150) + "px";
+    tip.style.top = "10px";
+  } else tip.style.display = "none";
+}
+$("schart").addEventListener("pointermove", ev => {
+  const win = turnWindow(); if (!win) return;
+  const r = $("schart").getBoundingClientRect(), W = r.width, M = {left: 44, right: 78};
+  const f = (ev.clientX - r.left - M.left) / (W - M.left - M.right);
+  sHover = f < 0 || f > 1 ? null : win[0] + f * (win[1] - win[0]);
+  renderSensorChart();
+});
+$("schart").addEventListener("pointerleave", () => { sHover = null; renderSensorChart(); });
+$("slegend").append(...RANGE.map(([k, short, color]) =>
+  el("span", {}, el("span", {class: "key", style: `background:${color}`}), `${short} ${k.replace("_", " ")}`)),
+  el("span", {}, el("span", {class: "key", style: "background:var(--critical)"}), "stop line, bumps and drops"));
+
+function onSensors(data) {
+  if (data.reset) resetSensors();
+  addSensorRows(data.rows || []);
+  scheduleSensorPaint();
+}
+let paintPending = false;
+function scheduleSensorPaint() {
+  if (paintPending) return;
+  paintPending = true;
+  setTimeout(() => { paintPending = false; renderStrip(); renderSensorChart(); }, 200);
+}
+setInterval(() => {            // a live session's clock moves even between readings
+  if (st.model && !st.model.ended && hasSensors()) scheduleSensorPaint();
+}, 500);
+
+// ------------------------------------------------------------------------- live data
+function setLive(state, text) {
+  $("live").textContent = text;
+  $("livedot").style.background = {live: "var(--good)", done: "var(--muted)", bad: "var(--critical)"}[state];
+}
+
+function onModel(model) {
+  const prevLast = st.model && st.model.turns.length ? st.model.turns.at(-1).n : null;
+  const sameRun = st.model && st.model.run === model.run;
+  st.model = model;
+  const last = model.turns.length ? model.turns.at(-1).n : null;
+  if (!sameRun) { st.turn = last; st.pickedTurn = false; st.cursor = 0; st.expanded.clear(); }
+  else if (!st.pickedTurn || st.turn === null || st.turn === prevLast) st.turn = last;
+  setLive(model.ended ? "done" : "live", model.ended ? "session ended" : "live");
+  render();
+}
+
+function connect(runId) {
+  if (st.stream) st.stream.close();
+  st.runId = runId;
+  const es = new EventSource("/api/stream?run=" + encodeURIComponent(runId || "latest"));
+  st.stream = es;
+  es.addEventListener("model", e => onModel(JSON.parse(e.data)));
+  es.addEventListener("runs", e => onRuns(JSON.parse(e.data)));
+  es.addEventListener("sensors", e => onSensors(JSON.parse(e.data)));
+  es.onerror = () => setLive("bad", "not connected (is the viewer still running?)");
+}
+
+function onRuns(data) {
+  const sel = $("run");
+  const runs = data.runs || [];
+  $("runwrap").hidden = runs.length < 2;
+  $("followwrap").hidden = runs.length < 2;
+  const keep = st.follow ? "latest" : st.runId;
+  sel.replaceChildren(...runs.map(r => el("option", {value: r.id}, r.name)));
+  if (runs.length) sel.value = keep && keep !== "latest" ? keep : runs[0].id;
+}
+$("run").addEventListener("change", e => { st.follow = false; $("follow").checked = false; connect(e.target.value); });
+$("follow").addEventListener("change", e => { st.follow = e.target.checked; connect(st.follow ? "latest" : $("run").value); });
+
+fetch("/api/runs").then(r => r.json()).then(data => {
+  st.follow = !!data.follow;
+  $("follow").checked = st.follow;
+  onRuns(data);
+  connect(st.follow ? "latest" : (data.runs[0] || {}).id);
+}).catch(() => setLive("bad", "can't reach the viewer"));
+window.addEventListener("resize", () => renderSensorChart());
+</script>
+</body>
+</html>

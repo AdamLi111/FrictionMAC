@@ -530,6 +530,26 @@ def test_listeners_see_every_message_and_extra_subscriptions_ride_along(monitor)
     assert sent == sensors.subscription_messages() + [extra]
 
 
+# ------------------------------------------ the session's sensor record (SENSOR_LOG_PATH)
+def test_the_sensor_log_records_range_ledge_and_bump_readings(monitor, tmp_path):
+    from robot_tools import sensors
+    path = tmp_path / "sensors.jsonl"
+    log = sensors.SensorLog(path)
+    monitor.add_listener(log)
+    monitor.feed(_tof("toffc", 0.42))
+    monitor.feed(_tof("toffl", 0.9, status=102))
+    monitor.feed(_edge("tofdfr", 0.09))
+    monitor.feed(_bump("bfl", True))
+    monitor.feed('{"eventName": "x", "message": "Registration Status: API event registered."}')
+    log.close()
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [(r["k"], r["s"]) for r in rows] == [("range", "front_center"), ("range", "front_left"),
+                                                ("ledge", "front_right"), ("bump", "front_left")]
+    assert rows[0]["d"] == 0.42 and rows[0]["ok"] is True and rows[1]["ok"] is False
+    assert rows[2]["drop"] is True and rows[3]["on"] is True
+    assert all(isinstance(r["t"], float) for r in rows)
+
+
 # ------------------------------------------ Test 9: the MCP server itself loads
 def test_the_mcp_server_module_imports():
     """Nothing above imports server.py, so an MCP SDK it can't run on (mcp 2.x renamed FastMCP)

@@ -12,6 +12,8 @@ harness; this file is just the human front end: banner, input source, and loggin
 
 Run (real robot):    MISTY_IP=172.20.10.2 .venv-agent/bin/python -m scripts.hw_console
 Run (dry, no robot): .venv-agent/bin/python -m scripts.hw_console
+Add --live to watch the agents, and the robot's sensors, on a local page as the session runs
+(scripts/log_viewer.py). Every sensor reading is recorded to data/hw_session_<ts>_sensors.jsonl.
 
 Type 'quit' (or Ctrl-C) to end.
 """
@@ -23,6 +25,7 @@ import anyio
 
 from agent_runtime import (architectures, config, main as agent_main, narrative,
                            session as sess_mod)
+from robot_tools.world_state import clear_worldstate
 
 QUIT = {"quit", "exit", "q", ":q"}
 _LEVEL = {"INFO": 0, "DEBUG": 1, "FULL": 2}
@@ -67,7 +70,10 @@ async def run():
     story_path = config.DATA_DIR / f"hw_session_{stamp}_story.txt"
     tool_log = config.DATA_DIR / f"hw_session_{stamp}_tools.jsonl"
     world = config.belief_store_path()   # sim uses a separate per-scene file from the real robot
+    clear_worldstate(world)              # every session starts with no memory of the last one
     os.environ["AGENT_EVENT_LOG"] = str(config.DATA_DIR / f"hw_session_{stamp}_events.jsonl")
+    # The robot tool server records every sensor reading here, for the log viewer.
+    os.environ["SENSOR_LOG_PATH"] = str(config.DATA_DIR / f"hw_session_{stamp}_sensors.jsonl")
 
     logs = Logs(transcript, level)
 
@@ -82,10 +88,7 @@ async def run():
         mode = "STUB (no physical movement — omit --stub to use the real robot)"
     print(f"── Misty console ──  arch: {arch.name} ({arch.description})  |  "
           f"mode: {mode}  |  log level: {level}")
-    # The belief store is written lazily (only when an agent calls update_world), so say where
-    # it will be rather than leaving its absence to be interpreted as a broken setup.
-    print(f"   world model: {world}"
-          + ("" if world.exists() else "  (not created yet — appears on the first update_world)"))
+    print(f"   world model: {world}  (cleared to {{}} for this session)")
 
     # Optional voice input (VOICE=1) — needs the real robot. VOICE_LAPTOP_MIC=1 = laptop mic.
     voice = None
@@ -112,7 +115,15 @@ async def run():
     # delegation it belongs to. Written live, so you can tail it while talking to the robot.
     story = narrative.NarrativeLog(story_path)
     story.header(f"MISTY SESSION {stamp}",
-                 {"architecture": f"{arch.name} ({arch.description})", "mode": mode})
+                 {"architecture": f"{arch.name} ({arch.description})", "mode": mode},
+                 arch=arch.name, hierarchy=arch.hierarchy())
+    if "--live" in sys.argv[1:]:
+        from scripts import log_viewer
+        try:
+            url, _ = log_viewer.start(story_path, open_browser=True)
+            print(f"   live log: {url}\n")
+        except OSError as e:
+            print(f"   (live log unavailable: {e})\n")
 
     # The console's only user-visible output: what Misty says.
     engine = sess_mod.TurnEngine(logs.emit,
@@ -164,7 +175,8 @@ async def run():
         logs.close()
         story.footer(f"SESSION ENDED — {turns} user turn(s).")
         story.close()
-        print(f"\nSession ended.\n  transcript ({level}): {transcript}\n  readable: {story_path}")
+        print(f"\nSession ended.\n  transcript ({level}): {transcript}\n  readable: {story_path}"
+              f"\n  see it on a page: python -m scripts.log_viewer {story_path}")
 
 
 if __name__ == "__main__":

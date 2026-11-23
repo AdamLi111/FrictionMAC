@@ -29,6 +29,7 @@ from claude_agent_sdk import (
 )
 
 from agent_runtime import architectures, config
+from robot_tools.world_state import clear_worldstate
 
 DEFAULT_TOOL_LOG = config.DATA_DIR / "agent_tool_calls.jsonl"
 # Belief-store path is chosen by config.belief_store_path() (sim uses a separate per-scene file).
@@ -79,6 +80,7 @@ async def run(prompt: str, *, tool_log=None, world_state=None, scene=None, arch=
     config.preflight_robot()
     tool_log = tool_log or DEFAULT_TOOL_LOG
     world_state = world_state or config.belief_store_path()  # sim uses a separate per-scene file
+    clear_worldstate(world_state)          # every run starts with no memory of the last one
 
     seen_tool_uses, final_text = [], None
     pending, started, completed = set(), set(), set()  # background task IDs

@@ -455,3 +455,27 @@ def test_a_narrow_passage_neither_stops_nor_traps_the_robot(tmp_path, monkeypatc
     finally:
         runtime.reset()
 
+
+def test_a_session_with_a_sensor_log_records_what_the_simulated_robot_sensed(tmp_path,
+                                                                              monkeypatch):
+    log = tmp_path / "sensors.jsonl"
+    scene_file = tmp_path / "scene.json"
+    scene_file.write_text(json.dumps(_scene(objects=[_NEAR_WALL])))
+    monkeypatch.setenv("ROBOT_SIM_SCENE", str(scene_file))
+    monkeypatch.setenv("WORLD_STATE_PATH", str(tmp_path / "ws.json"))
+    monkeypatch.setenv("TOOL_LOG_PATH", str(tmp_path / "tl.jsonl"))
+    monkeypatch.setenv("SIM_STATE_PATH", str(tmp_path / "sim_state.json"))
+    monkeypatch.setenv("SENSOR_LOG_PATH", str(log))
+    from robot_tools import runtime, tools
+    runtime.reset()
+    try:
+        tools.move_forward(1.0)                      # stops short of the wall
+        rows = [json.loads(line) for line in log.read_text().splitlines()]
+        kinds = {r["k"] for r in rows}
+        assert {"range", "ledge"} <= kinds
+        centre = [r["d"] for r in rows if r["k"] == "range" and r["s"] == "front_center"
+                  and r["ok"]]
+        assert centre[0] > centre[-1]                # the wall got closer as it drove
+    finally:
+        runtime.reset()
+

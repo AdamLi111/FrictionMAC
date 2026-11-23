@@ -15,6 +15,10 @@ the flat transcript rather than instead of it.
 
 Both front ends write one: `data/eval_.../<task>_story.txt` per episode, and
 `data/hw_session_<ts>_story.txt` per console session.
+
+Next to each story it writes the same events as JSON, one per line (`..._trace.jsonl`): exact
+text, a timestamp on every event, and the team's hierarchy in the header. That is what the log
+viewer reads (scripts/log_viewer.py), live or afterwards; the story stays the text to read.
 """
 import json
 import re
@@ -23,6 +27,7 @@ import time
 
 WIDTH = 94                  # wrap column for prose
 MAX_PAYLOAD = 1500          # chars of any single tool result / report kept verbatim
+TRACE_MAX_PAYLOAD = 20000   # the same, in the JSON trace
 _BAR = "─"
 
 # Harness boilerplate that carries no information about what the robot did. The launch ack is
@@ -64,7 +69,7 @@ def _looks_like_base64(text: str) -> bool:
     return len(text) > 600 and " " not in head and "\n" not in head
 
 
-def _clean_payload(value) -> str:
+def _clean_payload(value, limit: int = MAX_PAYLOAD) -> str:
     """A tool result / report as readable text, with camera frames and giant blobs collapsed.
 
     Real-mode `capture_view` returns a base64 JPEG; dumping that into a human log would bury
@@ -87,22 +92,41 @@ def _clean_payload(value) -> str:
     text = str(value if value is not None else "")
     if _looks_like_base64(text):
         return f"<camera frame, {len(text) // 1024} KB>"
-    if len(text) > MAX_PAYLOAD:
-        return text[:MAX_PAYLOAD] + f"\n… [+{len(text) - MAX_PAYLOAD} more characters]"
+    if len(text) > limit:
+        return text[:limit] + f"\n… [+{len(text) - limit} more characters]"
     return text
+
+
+def trace_path_for(story_path) -> str | None:
+    """`<x>_story.txt` -> `<x>_trace.jsonl`; None for a path not named like a story."""
+    path = str(story_path)
+    return path[:-len("_story.txt")] + "_trace.jsonl" if path.endswith("_story.txt") else None
 
 
 class NarrativeLog:
     """One readable transcript. Fed the structured events `TurnEngine` emits."""
 
-    def __init__(self, path, *, width: int = WIDTH):
+    def __init__(self, path, *, width: int = WIDTH, trace_path="auto"):
         self.f = open(path, "a", encoding="utf-8")
+        if trace_path == "auto":
+            trace_path = trace_path_for(path)
+        self.trace = open(trace_path, "a", encoding="utf-8") if trace_path else None
         self.width = width
         self.turn = 0
         self._counts = {"delegations": 0, "tools": 0, "utterances": 0}
         self._last_tool: dict[str, str] = {}   # agent -> the tool it called most recently
 
     # ------------------------------------------------------------------------------ plumbing
+    def _record(self, record_type: str, fields: dict):
+        """One line of the JSON trace. `fields` is a dict, not keyword arguments, because an
+        event's own keys (`kind`, `type`, `turn`, ...) must never collide with this signature."""
+        if self.trace is None:
+            return
+        line = json.dumps({**fields, "type": record_type, "t": round(time.time(), 3)},
+                          ensure_ascii=False, default=str)
+        self.trace.write(line + "\n")
+        self.trace.flush()
+
     def _write(self, text: str = ""):
         self.f.write(text + "\n")
         self.f.flush()
@@ -128,7 +152,13 @@ class NarrativeLog:
         return "DIRECTOR" if agent == "director" else agent
 
     # -------------------------------------------------------------------------------- header
-    def header(self, title: str, fields: dict):
+    def header(self, title: str, fields: dict, *, arch: str | None = None,
+               hierarchy: dict | None = None):
+        """`hierarchy` is {agent: the agent it answers to} (Architecture.hierarchy()); it goes
+        to the trace only, for drawing the team."""
+        self._record("header", {"title": title,
+                                "fields": {k: v for k, v in fields.items() if v is not None},
+                                "arch": arch, "hierarchy": hierarchy})
         self._write("=" * self.width)
         self._write(f"  {title}")
         for k, v in fields.items():
@@ -141,6 +171,7 @@ class NarrativeLog:
 
     # ---------------------------------------------------------------------------- the events
     def user_turn(self, n: int, text: str):
+        self._record("user", {"turn": n, "text": text})
         self.turn = n
         self._counts = {"delegations": 0, "tools": 0, "utterances": 0}
         self._write()
@@ -153,6 +184,10 @@ class NarrativeLog:
         self._write()
 
     def event(self, e: dict):
+        record = dict(e)
+        if "content" in record:
+            record["content"] = _clean_payload(record["content"], TRACE_MAX_PAYLOAD)
+        self._record("event", {**record, "turn": self.turn})
         kind, agent = e.get("kind"), e.get("agent", "director")
         indent = self._depth(agent)
         who = self._label(agent)
@@ -232,10 +267,14 @@ class NarrativeLog:
             self._write()
 
     def no_speech(self):
+        self._record("no_speech", {"turn": self.turn})
         self._write("  (the robot said nothing this turn — the user hears silence)")
 
     def turn_end(self, *, subtype: str | None = None, seconds: float | None = None,
                  timed_out: bool = False):
+        self._record("turn_end", {"turn": self.turn, "subtype": subtype,
+                                  "seconds": None if seconds is None else round(seconds, 1),
+                                  "timed_out": timed_out, "counts": dict(self._counts)})
         bits = [f"turn {self.turn} ended"]
         if timed_out:
             bits.append("CUT OFF (turn timeout)")
@@ -249,6 +288,7 @@ class NarrativeLog:
         self._write(f"  {_BAR * 2} " + " · ".join(bits))
 
     def footer(self, text: str):
+        self._record("footer", {"text": text})
         self._write()
         self._write("=" * self.width)
         self._block(text, 2)
@@ -256,3 +296,5 @@ class NarrativeLog:
 
     def close(self):
         self.f.close()
+        if self.trace is not None:
+            self.trace.close()

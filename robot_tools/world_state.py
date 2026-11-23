@@ -18,6 +18,16 @@ class WorldStateError(Exception):
     pass
 
 
+def clear_worldstate(path) -> None:
+    """Reset the world state file at `path` to an empty JSON object, `{}`.
+
+    Every run calls this before it starts (the console, a one-shot command, each evaluation
+    episode), so each run begins with no memory of the last one. The file is written rather than
+    deleted, so it always exists and always parses. It uses the same atomic write as normal
+    updates, so an interrupt mid-clear can't leave a half-written file."""
+    WorldState(str(path))._atomic_write({})
+
+
 class WorldState:
     def __init__(self, path: str, logger=None):
         self.path = path

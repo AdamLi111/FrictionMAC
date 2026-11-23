@@ -111,11 +111,14 @@ def get_sensors():
     offline."""
     if "sensors" not in _state:
         if config.is_sim():
-            _state["sensors"] = get_robot().monitor
+            monitor = get_robot().monitor
         else:
             from .sensors import SensorMonitor
-            _state["sensors"] = SensorMonitor(
-                None if config.is_stub() else config.misty_ip()).start()
+            monitor = SensorMonitor(None if config.is_stub() else config.misty_ip())
+        if os.environ.get("SENSOR_LOG_PATH"):         # record every reading for the session
+            from .sensors import SensorLog
+            monitor.add_listener(SensorLog(os.environ["SENSOR_LOG_PATH"]))
+        _state["sensors"] = monitor.start()
     return _state["sensors"]
 
 

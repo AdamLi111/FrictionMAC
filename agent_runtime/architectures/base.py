@@ -23,7 +23,7 @@ from abc import ABC, abstractmethod
 
 from claude_agent_sdk import ClaudeAgentOptions
 
-from agent_runtime import config, hooks
+from agent_runtime import config, hooks, topology
 
 
 class Architecture(ABC):
@@ -58,6 +58,11 @@ class Architecture(ABC):
     def subprocess_env(self) -> dict:
         """Extra env vars for the Claude CLI subprocess (merged over os.environ)."""
         return {}
+
+    def hierarchy(self) -> dict:
+        """{agent: the agent it answers to} for every delegatable agent. Flat by default: all
+        answer to the Director. The session logs record it, so a log viewer can draw the team."""
+        return {name: topology.DIRECTOR for name in self.agents()}
 
     def hook_set(self, agent_names: set) -> dict:
         """Hooks for this run option: the shared logging and gates, including the one that

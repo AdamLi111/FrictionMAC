@@ -42,7 +42,8 @@ def misty_ip():
 
 
 def world_state_path() -> str:
-    """Persistent JSON file backing WorldState (cross-session memory)."""
+    """JSON file backing WorldState. The agent entry points clear it to `{}` at the start of every
+    run, so it holds one session's memory."""
     return os.environ.get("WORLD_STATE_PATH") or os.path.join(DEFAULT_DATA_DIR, "world_state.json")
 
 

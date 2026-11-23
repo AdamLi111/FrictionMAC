@@ -132,6 +132,58 @@ def ledge_drop(distance, status, in_hazard=False) -> bool:
         return True
 
 
+class SensorLog:
+    """A session's sensor record: every range, ledge and bump reading the monitor receives, one
+    short JSON line each, as it arrives, e.g.
+        {"t": 1795462000.512, "k": "range", "s": "front_center", "d": 0.42, "st": 0, "ok": true}
+        {"t": ..., "k": "ledge", "s": "front_left", "d": 0.023, "st": 0, "drop": false}
+        {"t": ..., "k": "bump", "s": "front_left", "on": true}
+    `t` is wall-clock time, so it lines up with the agents' trace. The log viewer
+    (scripts/log_viewer.py) draws it, live during a session or afterwards. Attach with
+    `monitor.add_listener(SensorLog(path))`; the server does that when SENSOR_LOG_PATH is set."""
+
+    def __init__(self, path):
+        self._f = open(path, "a", encoding="utf-8")
+        self._lock = threading.Lock()
+
+    def __call__(self, message: dict) -> None:
+        payload = _field(message, "message")
+        if not isinstance(payload, dict):
+            return
+        sensor_id = str(_field(payload, "sensorId") or "").lower()
+        position = str(_field(payload, "sensorPosition") or "").lower()
+        status = _field(payload, "status")
+        row = None
+        if _field(payload, "distanceInMeters") is not None:
+            distance = _field(payload, "distanceInMeters")
+            name = _TOF_IDS.get(sensor_id) or _TOF_POSITIONS.get(position)
+            if name:
+                row = {"k": "range", "s": name, "d": distance, "st": status,
+                       "ok": _trusted(status)}
+            else:
+                corner = _EDGE_IDS.get(sensor_id) or _EDGE_POSITIONS.get(position)
+                if corner:
+                    row = {"k": "ledge", "s": corner, "d": distance, "st": status,
+                           "drop": ledge_drop(distance, status,
+                                              bool(_field(payload, "inHazard")))}
+        elif _field(payload, "isContacted") is not None:
+            bumper = (_BUMP_IDS.get(sensor_id) or _BUMP_NAMES.get(
+                str(_field(payload, "sensorName") or "").lower()))
+            if bumper:
+                row = {"k": "bump", "s": bumper, "on": bool(_field(payload, "isContacted"))}
+        if row is None:
+            return
+        line = json.dumps({"t": round(time.time(), 3), **row})
+        with self._lock:
+            if not self._f.closed:
+                self._f.write(line + "\n")
+                self._f.flush()
+
+    def close(self) -> None:
+        with self._lock:
+            self._f.close()
+
+
 class SensorMonitor:
     """The latest range readings and bump state, fed by Misty's event stream (or by `feed` in
     tests). Thread-safe: the WebSocket thread writes, tool threads read and wait.

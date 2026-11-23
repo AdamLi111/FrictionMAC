@@ -18,7 +18,7 @@ written). The env flag in `subprocess_env` buys one specific thing: cross-agent 
 resolution, without which peer-to-peer messaging fails. Everything else reuses the shared
 assembly in `Architecture.build_options`.
 """
-from agent_runtime import config, experts, managers
+from agent_runtime import config, experts, managers, topology
 from agent_runtime.architectures.base import Architecture
 
 
@@ -37,6 +37,9 @@ class DomainManagerArchitecture(Architecture):
         # A single dict is correct because the SDK/CLI team is one flat namespace — steering,
         # not config, decides who spawns/messages whom.
         return {**managers.build_managers(), **experts.build_agents_v2()}
+
+    def hierarchy(self) -> dict:
+        return topology.v2_parents()
 
     def allowed_tools(self) -> list[str]:
         # Director delegates (Agent) and talks to managers (SendMessage/ToolSearch); robot tools

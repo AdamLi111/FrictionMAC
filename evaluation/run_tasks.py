@@ -28,6 +28,9 @@ Usage
     .venv-agent/bin/python -m evaluation.run_tasks --task amb_001 --task cross_001
     .venv-agent/bin/python -m evaluation.run_tasks --arch v1 --limit 3 --repeats 2
 
+    # watch each episode's agents on a local page as it runs (scripts/log_viewer.py)
+    .venv-agent/bin/python -m evaluation.run_tasks --live --task amb_001
+
     # inspect the list without spending tokens
     .venv-agent/bin/python -m evaluation.run_tasks --list
     .venv-agent/bin/python -m evaluation.run_tasks --validate
@@ -39,7 +42,7 @@ Outputs (under `data/eval_<arch>_<timestamp>/`)
     <task_id>[_rN].log           the Director-side transcript at LOG_LEVEL (flat, complete)
     <task_id>[_rN]_tools.jsonl   every robot tool call
     <task_id>[_rN]_sim.json      ground-truth world as the episode left it
-    <task_id>[_rN]_beliefs.json  the agents' own world model (only if they wrote to it)
+    <task_id>[_rN]_beliefs.json  the agents' own world model (`{}` if they never wrote to it)
 """
 import argparse
 import json
@@ -53,6 +56,7 @@ import anyio
 from agent_runtime import (architectures, config, main as agent_main, narrative,
                            session as sess_mod)
 from evaluation import score, simulated_user, tasks as task_mod
+from robot_tools.world_state import clear_worldstate
 from evaluation.simulated_user import (SimulatedUser, SimulatedUserError,
                                        SimulatedUserUnavailable)
 
@@ -121,6 +125,7 @@ async def run_episode(task, arch, out_dir, *, level="DEBUG", turn_timeout=DEFAUL
     }
 
     # Per-episode environment. The scene picks the world; the paths keep episodes isolated.
+    clear_worldstate(paths["beliefs"])                  # no memory carried in from anywhere
     os.environ["ROBOT_SIM"] = "1"
     os.environ["ROBOT_SIM_SCENE"] = task.scene
     os.environ["SIM_STATE_PATH"] = paths["sim_state"]
@@ -149,7 +154,7 @@ async def run_episode(task, arch, out_dir, *, level="DEBUG", turn_timeout=DEFAUL
         "architecture": f"{arch.name} ({arch.description})",
         "category": task.category,
         "the user's goal (the robot is never told this)": task.goal,
-    })
+    }, arch=arch.name, hierarchy=arch.hierarchy())
 
     engine = sess_mod.TurnEngine(logs.emit, lambda text, friction: None,
                                  trace=story.event, speech_log=paths["tools"],
@@ -276,6 +281,13 @@ async def run(args) -> dict:
     print(f"── eval run ──  arch: {arch.name} ({arch.description})")
     print(f"   tasks: {len(selected)}  |  repeats: {args.repeats}  |  "
           f"episodes: {episodes_planned}  |  out: {out_dir}")
+    if args.live:
+        from scripts import log_viewer
+        try:
+            url, _ = log_viewer.start(out_dir, follow=True, open_browser=True)
+            print(f"   live log: {url}  (follows the episode that is running)")
+        except OSError as e:
+            print(f"   (live log unavailable: {e})")
     print()
 
     run_record = {
@@ -319,6 +331,7 @@ async def run(args) -> dict:
 
     print(score.format_summary(run_record["summary"], arch=arch.name))
     print(f"\n   {out_dir}/run.json   (summary also in summary.txt)")
+    print(f"   see the agents on a page: python -m scripts.log_viewer {out_dir}")
     return run_record
 
 
@@ -369,6 +382,8 @@ def main():
     p.add_argument("--log-level", default=os.environ.get("LOG_LEVEL", "DEBUG").upper(),
                    choices=sorted(_LEVEL), help="Director-side transcript verbosity")
     p.add_argument("--task-list", default=None, help="path to an alternative task_list.json")
+    p.add_argument("--live", action="store_true",
+                   help="watch the agents on a local page as each episode runs")
     p.add_argument("--summarize", metavar="RUN_DIR", default=None,
                    help="re-score a finished run directory and rewrite its summary, then exit "
                         "(no tokens spent — everything needed is already on disk)")

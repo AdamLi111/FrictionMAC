@@ -16,9 +16,11 @@ DATA_DIR = REPO / "data"
 
 
 def belief_store_path() -> Path:
-    """File where the agent's world-model beliefs (get_world / update_world / get_known_location)
-    persist. In SIM mode this is a SEPARATE file per scene, so simulated beliefs never mix with
-    the real-robot store (or with a different scene's). An explicit WORLD_STATE_PATH always wins."""
+    """File holding the agent's world-model beliefs (get_world / update_world /
+    get_known_location). Every run clears it to `{}` before it starts, so memory lasts one session
+    (or one evaluation episode), never longer. In SIM mode this is a SEPARATE file per scene, so
+    simulated beliefs never mix with the real-robot store (or with a different scene's). An
+    explicit WORLD_STATE_PATH always wins."""
     override = os.environ.get("WORLD_STATE_PATH")
     if override:
         return Path(override)
@@ -169,6 +171,9 @@ def robot_mcp_config(tool_log_path: Path, world_state_path: Path, scene: str | N
             env["ROBOT_STUB_SCENE"] = str(scene)
         if os.environ.get("ROBOT_STUB_SLOW") == "1":
             env["ROBOT_STUB_SLOW"] = "1"         # honor sleeps in stub (make tools slow)
+    if os.environ.get("SENSOR_LOG_PATH"):
+        # Every distance, ledge and bump reading the server receives, for the log viewer.
+        env["SENSOR_LOG_PATH"] = os.environ["SENSOR_LOG_PATH"]
     return {
         "type": "stdio",
         "command": str(robot_python()),

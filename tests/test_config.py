@@ -117,3 +117,13 @@ def test_no_sdk_means_no_bundled_cli(monkeypatch):
 def test_an_installed_cli_on_path_is_used_as_is(monkeypatch):
     monkeypatch.setattr(config.shutil, "which", lambda _: "/somewhere/bin/claude")
     assert config.find_cli() == "/somewhere/bin/claude"
+
+
+def test_the_robot_server_is_told_where_to_record_the_sensors(monkeypatch, tmp_path):
+    from agent_runtime import config
+    monkeypatch.delenv("SENSOR_LOG_PATH", raising=False)
+    assert "SENSOR_LOG_PATH" not in config.robot_mcp_config(tmp_path / "t", tmp_path / "w")["env"]
+    monkeypatch.setenv("SENSOR_LOG_PATH", str(tmp_path / "s.jsonl"))
+    env = config.robot_mcp_config(tmp_path / "t", tmp_path / "w")["env"]
+    assert env["SENSOR_LOG_PATH"] == str(tmp_path / "s.jsonl")
+

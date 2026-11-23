@@ -235,6 +235,9 @@ VOICE=1 VOICE_LAPTOP_MIC=1 .venv-agent/bin/python -m scripts.hw_console # laptop
 # single command (one-shot):
 .venv-agent/bin/python -m agent_runtime.main "go to the mug"
 
+# watch the agents and the robot's sensors on a local page (see "Watching it on a page"):
+.venv-agent/bin/python -m scripts.hw_console --live
+
 # choose the architecture (default v1); works for main and hw_console:
 AGENT_ARCH=v2 .venv-agent/bin/python -m agent_runtime.main "go to the mug"
 .venv-agent/bin/python -m agent_runtime.main --arch v2 "go to the mug"   # flag also works
@@ -452,6 +455,51 @@ reasoning — background-launch acks, `agentId`/token trailers, the `{"ok": true
 `speak`, and camera frames (a real-mode JPEG becomes `<camera frame, 34 KB>`). The flat `.log` is
 still written next to it, unabridged, for when you need the raw stream.
 
+### Watching it on a page
+
+[`scripts/log_viewer.py`](scripts/log_viewer.py) turns a session or episode into a page on
+localhost:
+
+- **The team.** It draws the architecture's hierarchy, with the user on the Director's row.
+  Each turn's messages appear as colored arrows numbered in the order they happened: the user
+  asking, delegations, reports back, `SendMessage` traffic, and speech to the user. Agents that
+  weren't involved in the turn are faded.
+- **Output and reasoning.** Under every agent, *output* lists what it sent and to whom, and
+  *reasoning* lists its thinking and notes. Both open below the diagram. The side panel has the
+  same buttons for every agent, plus the user's input. An agent not involved in the turn shows
+  nothing.
+- **The order.** "What happened, in order" numbers every step (sender → receiver, kind, text,
+  time into the turn). Clicking a step, or playing through them, highlights it on the diagram.
+- **The sensors** (console sessions). A strip in the page header shows the robot's four
+  distances, its ledges and its bumpers as they arrive. Below the diagram, a chart plots each
+  turn's distance readings with the turn's steps marked on it, along with the stop line, bumps
+  and ledge drops. Selecting a step shows what every sensor read at that moment.
+
+```bash
+python -m scripts.log_viewer data/hw_session_<ts>_story.txt     # one console session
+python -m scripts.log_viewer data/eval_v4_<ts>                    # a run: pick an episode
+python -m scripts.log_viewer --latest --open                      # the newest log, in a browser
+.venv-agent/bin/python -m scripts.hw_console --live               # live, during a session
+.venv-agent/bin/python -m evaluation.run_tasks --live --task amb_001   # live, following episodes
+```
+
+The viewer reads these files for each session or episode:
+
+- **The trace.** Each story log now has a JSON twin, `<x>_trace.jsonl`: exact text, a time on
+  every event, and the team's hierarchy.
+- **The story.** Older logs have no trace, so the viewer parses the story text instead. Their
+  line breaks are approximate.
+- **The hook log** (`<x>_events.jsonl`). This fills in agents the main stream never shows,
+  chiefly V2's experts under their managers: what they started, called and said, but not their
+  reasoning.
+- **The sensor log** (`<x>_sensors.jsonl`). The robot tool server writes every distance, ledge
+  and bump reading here, one short line each, when `SENSOR_LOG_PATH` is set. `hw_console` sets
+  it for every session; the evaluation runner doesn't.
+
+It re-reads the files as they grow, which is all `--live` is. The viewer needs only the
+standard library, but run it with `.venv-agent` for an older log: that lets it draw every agent
+of the architecture, including ones the session never called.
+
 The robot side is untouched: the runner drives the same architectures, steering, MCP tools and
 persistent-session turn semantics as `hw_console`, via the shared engine in
 [`agent_runtime/session.py`](agent_runtime/session.py). Only the input source changes — a
@@ -475,14 +523,16 @@ simulated user instead of a keyboard.
 | `LOG_LEVEL` | console transcript level: `INFO`/`DEBUG`/`FULL` | `DEBUG` |
 | `WORLD_STATE_PATH` / `TOOL_LOG_PATH` | world memory / tool-call log paths | under `data/` |
 | `SIM_STATE_PATH` | where the sim mirrors its live ground-truth world (the eval harness sets one per episode) | `data/sim_state.json` |
+| `SENSOR_LOG_PATH` | file the robot tool server appends every distance, ledge and bump reading to (`hw_console` sets one per session) | unset → not recorded |
 
 The **agents' world model** (what `get_world` / `update_world` / `get_known_location` read and
 write) lives in `data/agent_world_state.json` for real-robot runs, `data/sim_world_<scene>.json`
-in sim, and one file per episode under an eval run. It is written **lazily — the file does not
-exist until an agent actually calls `update_world`**, so a missing file means nothing was ever
-recorded (a command like "turn left" or "say hi" never touches it; recording needs a perceive →
-`map` cycle), not that anything is misconfigured. The console prints the path it will use on
-startup. Note that launching the MCP server by hand (`python -m robot_tools.server`, with no
+in sim, and one file per episode under an eval run. **Every run clears it to `{}` before it
+starts** (a console session, a one-shot command, each evaluation episode), so memory lasts one
+session, never longer; the file always exists and always parses. A file still `{}` afterwards
+means nothing was recorded (a command like "turn left" or "say hi" never touches it; recording
+needs a perceive → `map` cycle). The console prints the path on startup. Note that launching the
+MCP server by hand (`python -m robot_tools.server`, with no
 `WORLD_STATE_PATH` in the environment) uses a *different* default — `data/world_state.json`.
 | `SIM_USER_MODEL` | model backing the simulated user in `evaluation/` | `claude-haiku-4-5` |
 | `ANTHROPIC_API_KEY` | read from `.env`; the simulated user calls the Messages API directly | — |
