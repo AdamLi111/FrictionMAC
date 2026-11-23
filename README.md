@@ -41,7 +41,11 @@ Robot access has two modes, chosen by `MISTY_IP`: **real** (fails loudly if unre
   watched for bumps: on contact it is stopped and returns `ok: false` with a `bump` block (which
   bumper, `after_ms` into the move, and `estimated_traveled_m`, the drive calibration run
   backwards). A drive toward a bumper that is still pressed is refused rather than sent, since
-  Misty's hazard system would ignore it. The four downward (ledge) sensors are left to that
+  Misty's hazard system would ignore it. A straight move also stops itself near an obstacle:
+  `move_forward`/`move_backward` take `stop_within` (default 0.15 m), and when a distance sensor
+  facing the way it drives reads closer than that, the robot stops and returns an `obstacle`
+  block instead (the agent sets the condition; the code checks every reading against it as it
+  arrives, a few times a second). A move that would start inside `stop_within` isn't sent. The four downward (ledge) sensors are left to that
   hazard system. Without sensor data (stub mode, or the stream is down) results say the sensors
   are offline, so `ok: true` is never read as "nothing was touched".
 - **Vision** returns real image content the agent (a VLM) reasons over; no VLM runs in the
@@ -260,12 +264,20 @@ ROBOT_SIM_SCENE=office_kitchen AGENT_ARCH=v4 .venv-agent/bin/python -m scripts.h
   Walls and furniture are found by casting sight-rays across the FOV (every 0.5°), so they are
   seen at any range and reported at the distance of their nearest visible face; point objects
   (cups) are seen when their own bearing is in view and the line to them is clear.
-- **The distance and bump sensors are simulated from the same geometry.** Each range sensor
-  reads the nearest solid surface inside its cone, small objects included, out to 1.2 m. A
-  collision reports which bumper hit and after how long, and a bumper stays pressed while the
-  body touches something. Misty doesn't publish the cone's width or the angle of the two outer
-  front sensors, so the sim assumes a 25° cone and ±30°
-  ([`world_model.py`](robot_tools/sim/world_model.py)); check them on the robot.
+- **The robot moves and senses the way Misty does.** A simulated Misty
+  ([`sim/robot.py`](robot_tools/sim/robot.py)) takes the same `drive_time`/`stop` commands, moves
+  through the world over simulated time at the drive calibration's speed, and streams its
+  sensors in Misty's own message format into the same `SensorMonitor` the robot feeds, so the
+  movement code, the bump stop and the `stop_within` stop are the robot's code. Each range sensor
+  reports about every 0.32 s (as measured on Misty), staggered, with a few millimetres of noise:
+  the gap to the nearest solid surface inside its cone (small objects included) out to 1.2 m,
+  else status 102, "no reading". Each of the four bumpers sends a message on contact and on
+  release, and stays pressed while the body touches something on its side. Simulated time
+  passes only while a tool waits on the sensors, so a 4 s drive takes milliseconds. Misty
+  doesn't publish the cone's width or the angle of the two outer front sensors, so the sim
+  assumes a 25° cone and ±30° ([`world_model.py`](robot_tools/sim/world_model.py)); the bump and
+  stop latencies are assumptions too. Like the robot, the agent is never told what it bumped
+  into; the collision goes only to the world's log for the evaluator.
 - Scenes are JSON in [`robot_tools/sim/scenes/`](robot_tools/sim/scenes/) (schema in
   [`sim/scene.py`](robot_tools/sim/scene.py)); `ROBOT_SIM_SCENE` takes a bundled name or a path.
 - **Visualize a scene** as a minimalist top-down SVG (walls, objects, robot heading + FOV, and
@@ -447,6 +459,7 @@ startup. Note that launching the MCP server by hand (`python -m robot_tools.serv
 
 ```bash
 .venv/bin/python -m pytest              # robot-layer + task-list tests (no hardware, no agent)
+.venv/bin/python -m scripts.sensor_probe   # real robot: do the distance + bump sensors report? (nothing moves)
 .venv-agent/bin/python -m scripts.step4_test on   # real-API friction test (stub robot)
 .venv-agent/bin/python -m evaluation.run_tasks --validate   # task list vs. the scenes
 ```

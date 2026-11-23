@@ -13,9 +13,11 @@ geometry (there is no "obstacle" flag) by marching the robot disc along its path
 just before the first overlap; the object hit is recorded so the evaluator can decide whether
 that collision means success (the user asked to reach/bump it) or failure.
 
-The robot's distance and bump sensors (robot_tools/sensors.py) are answered from the same
+The robot's distance and bump sensors (robot_tools/sensors.py) are computed from the same
 geometry: the four range sensors read the nearest solid surface in their cones, a collision
-names the bumper(s) that hit, and a bumper stays pressed while the body touches something.
+names the bumper(s) that hit, and a bumper stays pressed while the body touches something. The
+agent never reads these directly: the simulated robot (robot.py) drives through this world over
+simulated time and streams them, the way Misty does, to the same SensorMonitor.
 """
 import math
 
@@ -108,23 +110,34 @@ class SimWorld:
         self.collisions = list(scene.get("collisions", []))   # full log (for the evaluator)
 
     # ------------------------------------------------------------------ movement
-    def turn(self, degrees: float):
-        """Rotate in place. Positive = right (clockwise); negative = left."""
+    # Each motion has a physical step (rotate / advance) and a record (record_turn / record_drive
+    # plus note_collision). turn() and move() do both at once; the simulated robot
+    # (sim/robot.py) steps a motion a little at a time as simulated time passes, then records it
+    # once, so the history and the collision log read the same either way.
+    def rotate(self, degrees: float):
+        """Rotate in place without recording it. Positive = right (clockwise)."""
         self.heading = (self.heading + degrees) % 360.0
+
+    def record_turn(self, degrees: float):
         self.action_history.append(f"turned {'right' if degrees >= 0 else 'left'} "
                                    f"{abs(degrees):.0f}°")
 
-    def move(self, distance: float) -> dict:
-        """Advance `distance` metres along the current heading (negative = backward), stopping
-        just before any collision. Returns {"collision": name|None, "message": str|None,
-        "moved": metres actually travelled, "bumpers": the bumpers a collision pressed}."""
+    def turn(self, degrees: float):
+        """Rotate in place. Positive = right (clockwise); negative = left."""
+        self.rotate(degrees)
+        self.record_turn(degrees)
+
+    def advance(self, distance: float):
+        """Move up to `distance` metres along the current heading (negative = backward), stopping
+        just before the first overlap. Records nothing. Returns (metres moved, the object hit or
+        None)."""
         rad = math.radians(self.heading)
         sign = 1.0 if distance >= 0 else -1.0
         ux, uy = math.sin(rad) * sign, math.cos(rad) * sign
         total = abs(distance)
 
         start = (self.robot_pos[0], self.robot_pos[1])
-        steps = max(1, int(total / _STEP))
+        steps = max(1, int(math.ceil(total / _STEP - 1e-9)))
         last_safe = start
         hit = None
         for i in range(1, steps + 1):
@@ -137,24 +150,44 @@ class SimWorld:
             last_safe = cand
 
         self.robot_pos = [last_safe[0], last_safe[1]]
-        moved = math.hypot(last_safe[0] - start[0], last_safe[1] - start[1])
+        return math.hypot(last_safe[0] - start[0], last_safe[1] - start[1]), hit
+
+    def note_collision(self, obj) -> dict:
+        """Log a collision with `obj` at the robot's current position (for the evaluator)."""
+        col = {
+            "object": obj.name,
+            "position": [round(self.robot_pos[0], 3), round(self.robot_pos[1], 3)],
+            "message": f"collided with {obj.name}",
+        }
+        self._collision = col
+        self.collisions.append(col)
+        return col
+
+    def record_drive(self, moved: float, hit=None):
+        """The history line for a straight drive of `moved` metres (negative = backward)."""
         self.action_history.append(
-            f"moved {'forward' if sign > 0 else 'backward'} {moved:.2f}m"
+            f"moved {'forward' if moved >= 0 else 'backward'} {abs(moved):.2f}m"
             + (f" then collided with {hit.name}" if hit else ""))
 
+    def bumpers_facing(self, obj, end: str) -> list:
+        """The bumpers on `end` ("front" or "rear") that a contact with `obj` presses: how a
+        straight drive that runs into `obj` presses them, whatever the angle."""
+        pos = (self.robot_pos[0], self.robot_pos[1])
+        contact = geo.shape_closest_point(obj.shape, pos)
+        return bumpers_at(geo.relative_bearing(pos, self.heading, contact), end=end)
+
+    def move(self, distance: float) -> dict:
+        """Advance `distance` metres along the current heading (negative = backward), stopping
+        just before any collision, and record it. Returns {"collision": name|None,
+        "message": str|None, "moved": metres actually travelled, "bumpers": the bumpers a
+        collision pressed}."""
+        sign = 1.0 if distance >= 0 else -1.0
+        moved, hit = self.advance(distance)
+        self.record_drive(sign * moved, hit)
         if hit is not None:
-            col = {
-                "object": hit.name,
-                "position": [round(self.robot_pos[0], 3), round(self.robot_pos[1], 3)],
-                "message": f"collided with {hit.name}",
-            }
-            self._collision = col
-            self.collisions.append(col)
-            contact = geo.shape_closest_point(hit.shape, last_safe)
-            bumpers = bumpers_at(geo.relative_bearing(last_safe, self.heading, contact),
-                                 end="front" if sign > 0 else "rear")
+            col = self.note_collision(hit)
             return {"collision": hit.name, "message": col["message"], "moved": moved,
-                    "bumpers": bumpers}
+                    "bumpers": self.bumpers_facing(hit, "front" if sign > 0 else "rear")}
         return {"collision": None, "message": None, "moved": moved, "bumpers": []}
 
     def _first_overlap(self, p):
@@ -170,29 +203,39 @@ class SimWorld:
         return col
 
     # ------------------------------------------------------------------ proximity sensors
-    def range_readings(self) -> dict:
-        """What the four range sensors read from this pose: for each, the distance from the
+    def range_reading(self, sensor: str, near=None):
+        """The exact gap (m) one range sensor measures from this pose: the distance from the
         robot's body to the nearest solid surface inside its cone (any object, a cup included:
-        anything the robot can bump into), or NO_READING when nothing lies within
-        TOF_MAX_RANGE_M. Rays start at the robot's centre, so a hit minus the body radius is the
-        gap in front of the bumper."""
+        anything the robot can bump into), or None when nothing lies within TOF_MAX_RANGE_M.
+        Rays start at the robot's centre, so a hit minus the body radius is the gap in front of
+        the bumper. `near` reuses a list of candidate objects already filtered for this pose."""
+        pos = (self.robot_pos[0], self.robot_pos[1])
+        if near is None:
+            near = [o for o in self.objects
+                    if o.clearance(pos) <= self.robot_radius + TOF_MAX_RANGE_M]
+        n = int(round(TOF_CONE_DEGREES / TOF_RAY_STEP_DEGREES)) + 1
+        first = None
+        for i in range(n):
+            bearing = TOF_BEARINGS[sensor] - TOF_CONE_DEGREES / 2.0 + TOF_CONE_DEGREES * i / (n - 1)
+            rad = math.radians(self.heading + bearing)
+            ray = (math.sin(rad), math.cos(rad))
+            for obj in near:
+                t = geo.ray_solid_distance(pos, ray, obj.shape)
+                if t is not None and (first is None or t < first):
+                    first = t
+        gap = None if first is None else max(0.0, first - self.robot_radius)
+        return gap if gap is not None and gap <= TOF_MAX_RANGE_M else None
+
+    def range_readings(self) -> dict:
+        """What the four range sensors read from this pose, exactly: {sensor: gap in metres, or
+        NO_READING}. The simulated robot streams these, with the real sensors' noise and rate."""
         pos = (self.robot_pos[0], self.robot_pos[1])
         near = [o for o in self.objects
                 if o.clearance(pos) <= self.robot_radius + TOF_MAX_RANGE_M]
-        n = int(round(TOF_CONE_DEGREES / TOF_RAY_STEP_DEGREES)) + 1
         out = {}
         for sensor in RANGE_SENSORS:
-            first = None
-            for i in range(n):
-                bearing = TOF_BEARINGS[sensor] - TOF_CONE_DEGREES / 2.0 + TOF_CONE_DEGREES * i / (n - 1)
-                rad = math.radians(self.heading + bearing)
-                ray = (math.sin(rad), math.cos(rad))
-                for obj in near:
-                    t = geo.ray_solid_distance(pos, ray, obj.shape)
-                    if t is not None and (first is None or t < first):
-                        first = t
-            gap = None if first is None else max(0.0, first - self.robot_radius)
-            out[sensor] = round(gap, 3) if gap is not None and gap <= TOF_MAX_RANGE_M else NO_READING
+            gap = self.range_reading(sensor, near)
+            out[sensor] = NO_READING if gap is None else round(gap, 3)
         return out
 
     def bumpers_pressed(self) -> list:

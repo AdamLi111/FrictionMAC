@@ -26,8 +26,19 @@ even sent. The callbacks here accept either convention.
 Times are the monitor's own monotonic clock at the moment a message ARRIVED (a few tens of ms
 after the event), so they compare directly with the time a drive was commanded. A bump also
 keeps the robot's own `created` timestamp, for the record.
+
+A drive watches this stream to know when to stop (`wait_for_stop`): at the first bumper contact,
+or, when the agent set a `stop_within` distance, at the first trusted reading closer than that
+from a sensor facing the way it drives. That is the whole monitor: the agent states the
+condition, and this code checks every reading against it as it arrives.
+
+The simulation feeds the same class. Its robot (sim/robot.py) publishes Misty-format messages
+into `feed`, and is passed in as `source`: then the monitor's clock is the simulation's, and
+waiting on the monitor is what moves simulated time forward (`source.pump`), so the tools that
+drive the real robot drive the simulated one unchanged.
 """
 import json
+import math
 import sys
 import threading
 import time
@@ -57,6 +68,7 @@ _BUMP_DEBOUNCE_MS = 0          # every contact and every release
 _RECONNECT_S = 2.0
 _SILENT_S = 2.0                # connected, but no data for this long: not actually streaming
 _KEEP_CONTACTS = 50
+_TIME_EPS = 1e-9            # a wait this close to its deadline is over
 
 
 def subscription_messages() -> list:
@@ -81,19 +93,34 @@ def _field(payload: dict, name: str):
     return None
 
 
+def _trusted(status) -> bool:
+    """A range reading the sensor itself trusts: status 0, or no status field at all. Anything
+    else (1xx low confidence, 2xx error) means it measured nothing reliable."""
+    try:
+        return status is None or int(status) == 0
+    except (TypeError, ValueError):
+        return False
+
+
 class SensorMonitor:
     """The latest range readings and bump state, fed by Misty's event stream (or by `feed` in
-    tests). Thread-safe: the WebSocket thread writes, tool threads read and wait."""
+    tests). Thread-safe: the WebSocket thread writes, tool threads read and wait.
 
-    def __init__(self, ip=None, clock=time.monotonic):
+    `source` is the simulated robot when the simulation stands in for Misty: it supplies the
+    clock and the messages, and waiting on the monitor advances it (see the module docstring)."""
+
+    def __init__(self, ip=None, clock=time.monotonic, source=None):
         self.ip = ip
         self._clock = clock
-        self._cond = threading.Condition()
+        self._source = source
+        # Reentrant, because in simulation a wait (which holds the lock) runs the simulation,
+        # and the simulation feeds its messages in on the same thread.
+        self._cond = threading.Condition(threading.RLock())
         self._ranges = {}             # sensor -> (distance, status, arrived)
         self._pressed = {}            # bumper -> currently pressed
         self._contacts = []           # [{"bumper", "t", "time"}], most recent last
         self._last_data = None
-        self._connected = False
+        self._connected = source is not None    # the simulation is "subscribed" from the start
         self._stopping = threading.Event()
         self._thread = None
         self._app = None
@@ -231,8 +258,7 @@ class SensorMonitor:
                     continue
                 distance, status, _ = reading
                 try:
-                    valid = status is None or int(status) == 0
-                    out[sensor] = round(float(distance), 3) if valid else NO_READING
+                    out[sensor] = round(float(distance), 3) if _trusted(status) else NO_READING
                 except (TypeError, ValueError):
                     out[sensor] = NO_READING
         return out
@@ -247,34 +273,82 @@ class SensorMonitor:
         with self._cond:
             return [dict(c) for c in self._contacts if c["t"] >= since]
 
-    def wait_for_contact(self, since: float, timeout: float) -> list:
-        """Block until a bumper contact arrives at or after `since`, or `timeout` seconds pass.
-        Returns the contacts (empty on timeout). A drive uses this as its wait, so it returns the
-        moment the robot touches something instead of sleeping out the planned duration."""
+    def stop_reason(self, since: float, watch=(), stop_within: float = 0.0):
+        """Why a move that began at `since` should stop now, or None. A bumper contact that
+        arrived at or after `since` comes first: {"bump": [contacts, oldest first]}. Otherwise,
+        when `stop_within` > 0, the closest trusted reading among the sensors in `watch` that
+        arrived at or after `since` and is nearer than `stop_within`:
+        {"obstacle": {"sensor", "distance_m", "t"}}. A reading the sensor doesn't trust, or one
+        from before the move, never stops it."""
+        with self._cond:
+            hits = [dict(c) for c in self._contacts if c["t"] >= since]
+            if hits:
+                return {"bump": hits}
+            if not stop_within or stop_within <= 0:
+                return None
+            close = []
+            for sensor in watch:
+                reading = self._ranges.get(sensor)
+                if reading is None or reading[2] < since or not _trusted(reading[1]):
+                    continue
+                try:
+                    distance = float(reading[0])
+                except (TypeError, ValueError):
+                    continue
+                if distance < stop_within:
+                    close.append((distance, sensor, reading[2]))
+            if not close:
+                return None
+            distance, sensor, arrived = min(close)
+            return {"obstacle": {"sensor": sensor, "distance_m": round(distance, 3), "t": arrived}}
+
+    def wait_for_stop(self, since: float, timeout: float, watch=(), stop_within: float = 0.0):
+        """Block until `stop_reason` gives a reason, or `timeout` seconds pass (None). A drive
+        uses this as its wait, so it returns the moment the robot touches something, or gets
+        closer than `stop_within` to something a watched sensor sees, instead of sleeping out
+        the planned duration."""
         deadline = self._clock() + max(0.0, timeout)
         with self._cond:
             while True:
-                hits = [dict(c) for c in self._contacts if c["t"] >= since]
-                if hits:
-                    return hits
+                reason = self.stop_reason(since, watch, stop_within)
+                if reason is not None:
+                    return reason
                 remaining = deadline - self._clock()
-                if remaining <= 0:
-                    return []
-                self._cond.wait(remaining)
+                if remaining <= _TIME_EPS:
+                    return None
+                self._wait(remaining)
 
     def wait_fresh(self, since: float, timeout: float) -> bool:
-        """Block until every range sensor has reported at or after `since` (or `timeout`), so a
-        reading taken right after a move describes where the robot ended up. Returns at once when
-        offline: no fresh data is coming."""
+        """Block until every range sensor has reported after `since` (or `timeout`), so a
+        reading taken right after a move describes where the robot ended up, not the reading
+        that stopped it. Returns at once when offline: no fresh data is coming."""
         if not self.online:
             return False
         deadline = self._clock() + max(0.0, timeout)
         with self._cond:
             while True:
-                if all(self._ranges.get(s, (None, None, -1.0))[2] >= since
+                if all(self._ranges.get(s, (None, None, -math.inf))[2] > since
                        for s in RANGE_SENSORS):
                     return True
                 remaining = deadline - self._clock()
-                if remaining <= 0:
+                if remaining <= _TIME_EPS:
                     return False
-                self._cond.wait(remaining)
+                self._wait(remaining)
+
+    def idle(self, seconds: float) -> None:
+        """Let `seconds` pass on the monitor's clock while messages keep arriving. In the
+        simulation this is how time moves on with no drive running."""
+        deadline = self._clock() + max(0.0, seconds)
+        with self._cond:
+            while (remaining := deadline - self._clock()) > _TIME_EPS:
+                self._wait(remaining)
+
+    def _wait(self, remaining: float) -> None:
+        """Let up to `remaining` seconds pass, with the lock held on entry. On the robot: block
+        until the WebSocket thread delivers the next message. In simulation: advance the
+        simulated robot, which feeds its messages in on this thread and returns after the next
+        one (or once `remaining` has passed)."""
+        if self._source is not None:
+            self._source.pump(remaining)
+        else:
+            self._cond.wait(remaining)

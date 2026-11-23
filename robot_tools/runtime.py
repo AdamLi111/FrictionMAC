@@ -80,8 +80,14 @@ def get_world() -> WorldState:
 
 
 def get_robot():
+    """The robot the tools command: the real Misty, the stub in stub mode, or in sim mode the
+    simulated Misty (sim/robot.py), which drives through the sim world and streams its sensors."""
     if "robot" not in _state:
-        _state["robot"] = backend.make_robot()
+        if config.is_sim():
+            from .sim.robot import SimRobot
+            _state["robot"] = SimRobot(get_sim_world())
+        else:
+            _state["robot"] = backend.make_robot()
     return _state["robot"]
 
 
@@ -100,13 +106,16 @@ def get_sim_world():
 
 def get_sensors():
     """Misty's distance + bump sensors (sensors.SensorMonitor): streamed from the robot in real
-    mode; never connected in stub mode, so it has no data and tools report the sensors offline.
-    None in sim mode, where the world model answers instead."""
-    if config.is_sim():
-        return None
+    mode; streamed from the simulated robot in sim mode, in the same message format and at the
+    same rate; never connected in stub mode, so it has no data and tools report the sensors
+    offline."""
     if "sensors" not in _state:
-        from .sensors import SensorMonitor
-        _state["sensors"] = SensorMonitor(None if config.is_stub() else config.misty_ip()).start()
+        if config.is_sim():
+            _state["sensors"] = get_robot().monitor
+        else:
+            from .sensors import SensorMonitor
+            _state["sensors"] = SensorMonitor(
+                None if config.is_stub() else config.misty_ip()).start()
     return _state["sensors"]
 
 
@@ -141,17 +150,17 @@ def calc_turn_time(degrees) -> int:
     return _calib._calculate_turn_time(degrees)
 
 
-def calc_drive_progress(elapsed_ms: float, planned_m: float) -> float:
-    """The drive calibration run backwards: about how far (m) a straight move planned for
-    `planned_m` had got `elapsed_ms` after it was commanded. The calibration gives the time a
-    drive from rest needs to cover a distance, so the estimate is the distance whose time is
-    `elapsed_ms`, found by bisection so the curve's shape stays in the vendored calibration.
-    Only as good as that calibration; capped at the planned distance."""
+def drive_distance_at(elapsed_ms: float, planned_m: float) -> float:
+    """The drive calibration run backwards: how far (m) a straight move planned for `planned_m`
+    has got `elapsed_ms` after it was commanded. The calibration gives the time a drive from
+    rest needs to cover a distance, so this is the distance whose time is `elapsed_ms`, found by
+    bisection so the curve's shape stays in the vendored calibration. Capped at the plan. The
+    simulated robot moves by exactly this curve, so its speed is the calibration's."""
     planned_m = abs(planned_m)
     if elapsed_ms <= 0 or planned_m <= 0:
         return 0.0
     if elapsed_ms >= calc_drive_time(planned_m):
-        return round(planned_m, 2)
+        return planned_m
     lo, hi = 0.0, planned_m
     for _ in range(40):
         mid = (lo + hi) / 2.0
@@ -159,21 +168,33 @@ def calc_drive_progress(elapsed_ms: float, planned_m: float) -> float:
             lo = mid
         else:
             hi = mid
-    return round((lo + hi) / 2.0, 2)
+    return (lo + hi) / 2.0
+
+
+def calc_drive_progress(elapsed_ms: float, planned_m: float) -> float:
+    """About how far (m, to the cm) a straight move had got `elapsed_ms` into it: what a bump or
+    obstacle result reports as `estimated_traveled_m`. Only as good as the drive calibration."""
+    return round(drive_distance_at(elapsed_ms, planned_m), 2)
 
 
 # --- stub-aware helpers ---
 def wait_budget(seconds: float) -> float:
-    """How long a tool may block waiting on the robot: `seconds` on hardware, 0 in stub mode so
+    """How long a tool may wait on the robot's sensors: `seconds` on hardware, and in the sim,
+    where waiting is what moves simulated time forward and costs no real time; 0 in stub mode so
     tests run fast. ROBOT_STUB_SLOW=1 honors the delays even in stub mode (used to make a stub
     tool call reliably slow, e.g. for the background-task in-flight probe)."""
+    if config.is_sim():
+        return max(0.0, seconds)
     if config.is_stub() and os.environ.get("ROBOT_STUB_SLOW") != "1":
         return 0.0
     return max(0.0, seconds)
 
 
 def sleep(seconds: float) -> None:
-    """Real sequencing delay on hardware; a no-op in stub mode (see wait_budget)."""
+    """Real sequencing delay on hardware; a no-op in stub mode (see wait_budget) and in the sim,
+    where nothing waits on the wall clock."""
+    if config.is_sim():
+        return
     seconds = wait_budget(seconds)
     if seconds:
         import time

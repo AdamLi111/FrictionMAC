@@ -87,37 +87,47 @@ def _frame_content(b64: str, label: str):
 # ---- movement (DRIVE) ----
 # Drive/turn calls hold one shared DRIVE lock, so two of them never overlap; a call on a
 # different motor (arm/head/face/LED) runs concurrently. Every movement result also carries the
-# distance sensors' readings after the move, and a "bump" block if a bumper was pressed.
+# distance sensors' readings after the move, and a "bump" or "obstacle" block if one stopped it.
 @mcp.tool()
-async def move_forward(distance: float = 1.0) -> dict:
-    """Drive straight forward `distance` meters.
+async def move_forward(distance: float = 1.0,
+                       stop_within: float = tools.DEFAULT_STOP_WITHIN_M) -> dict:
+    """Drive straight forward `distance` meters, stopping early if the three front distance
+    sensors see something closer than `stop_within` meters (default 0.15; 0 turns this off, for
+    when you mean to touch what's ahead).
 
-    Returns {"ok": true, "duration_ms": N, "distances_m": {...}} when the move completed with no
-    bumper pressed; `distances_m` is the distance-sensor reading taken right after the move (the
-    same thing read_distance_sensors returns).
+    Returns {"ok": true, "duration_ms": N, "distances_m": {...}} when the move completed;
+    `distances_m` is the distance-sensor reading taken right after the move (the same thing
+    read_distance_sensors returns).
 
     `ok: false` means the move did not complete as asked, and which key is present says why:
+      - "obstacle": a front distance sensor read closer than `stop_within`, so the robot stopped
+        early. It names the `sensor`, its reading (`distance_m`), `after_ms` (how long into the
+        move) and `estimated_traveled_m` (about how far the robot got, estimated from the drive's
+        timing). The sensors report a few times a second, so the robot may coast a few
+        centimetres closer than that reading before it stops: `distances_m` says where it ended
+        up. With `already_within: true` the robot did not move at all, because something was
+        already that close.
       - "bump": a bumper was pressed, so the robot stopped early. It names the bumper(s) and
-        gives `after_ms` (how long into the move) and `estimated_traveled_m` (about how far the
-        robot got, estimated from the drive's timing). With `already_pressed: true` the robot did
-        not move at all: a bumper on that end was already pressed against something, and it
-        won't drive into it -- back up or turn first. In simulation a "collision" key also names
-        the object hit.
+        gives `after_ms` and `estimated_traveled_m` as above. With `already_pressed: true` the
+        robot did not move at all: a bumper on that end was already pressed against something,
+        and it won't drive into it -- back up or turn first.
       - "error": the command could not be issued at all (e.g. the robot became unreachable);
         whether it moved is unknown.
 
-    `ok: true` means no bumper was pressed during the move. It does NOT mean "I arrived": confirm
-    progress by looking (capture_view). If a "sensors" key says offline, there was no sensor
-    data, so `ok: true` then says nothing about whether anything was touched."""
-    return await _off(tools.move_forward, distance)
+    `ok: true` means nothing stopped the move. It does NOT mean "I arrived": confirm progress by
+    looking (capture_view). If a "sensors" key says offline, there was no sensor data, so
+    `ok: true` then says nothing about whether anything was near or touched."""
+    return await _off(tools.move_forward, distance, stop_within)
 
 
 @mcp.tool()
-async def move_backward(distance: float = 1.0) -> dict:
-    """Drive straight backward `distance` meters. Same return shape as move_forward. The rear
-    bumpers and the `back` distance sensor cover this direction; the forward-facing camera never
-    sees behind the robot."""
-    return await _off(tools.move_backward, distance)
+async def move_backward(distance: float = 1.0,
+                        stop_within: float = tools.DEFAULT_STOP_WITHIN_M) -> dict:
+    """Drive straight backward `distance` meters, stopping early if the `back` distance sensor
+    sees something closer than `stop_within` meters (default 0.15; 0 turns this off). Same
+    return shape as move_forward. The rear bumpers and the `back` distance sensor cover this
+    direction; the forward-facing camera never sees behind the robot."""
+    return await _off(tools.move_backward, distance, stop_within)
 
 
 @mcp.tool()

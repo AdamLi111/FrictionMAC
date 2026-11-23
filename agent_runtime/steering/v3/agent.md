@@ -33,7 +33,8 @@ Use it to judge how long the previous task took. If the user has been waiting fo
   **turn**, update objects' directions relative to you; propagate `room` when you change rooms.
 
 **Movement** — open-loop dead-reckoning, **no odometry** (amounts are approximate).
-- `move_forward/backward(m)`, `turn_left/right(deg)`, `stop()`, `read_distance_sensors()`.
+- `move_forward/backward(m, stop_within=0.15)`, `turn_left/right(deg)`, `stop()`,
+  `read_distance_sensors()`.
 - There is no "navigate to X" — you compose a short sequence of primitives. To approach a
   target: **turn to face it** (using the direction you perceived), **`capture_view` and look**,
   then plan the drive from what you SEE. For example, close the distance (forward) and detour
@@ -42,20 +43,26 @@ Use it to judge how long the previous task took. If the user has been waiting fo
 - **Judge distance from the image yourself.** Keep moves modest, re-capture / re-perceive when
   unsure or the target was far.
 - **Measure what's close instead of estimating it.** `read_distance_sensors` measures the free
-  space around the base: before a forward move, read it and keep the move about 0.1 m shorter
-  than the reading in the direction you'll drive. Beyond the sensors' range ("no reading") the
-  image is all you have. Every move's result also carries the readings from right after it
-  (`distances_m`).
-- `ok: true` means no bumper was pressed, not "I arrived". Confirm that by looking. An `error`
-  key means the command never reached the robot: stop and say so.
-- **After a bump, back off and re-plan.** A `bump` (`ok: false`) means a bumper was pressed and
-  the robot stopped there; `estimated_traveled_m` is about how far that move got, so that is
-  roughly how far away the obstacle was (in simulation a `collision` key also names it). Drop the
-  rest of the plan. If what you touched is the target itself, you've arrived. Otherwise back off
-  about 0.15 m (`move_backward` after a front bump, `move_forward` after a rear one), read the
-  sensors and look again, and plan a new approach from what you see: around the obstacle, or in
-  shorter steps. A bump well short of your plan means your image-based distances run long, so
-  lean on the sensors. After two such recoveries, a third bump means stop and say so.
+  space around the base: before a forward move, read it and keep the move about 0.2 m shorter
+  than the reading in the direction you'll drive, so it ends clear of the automatic stop below.
+  Beyond the sensors' range ("no reading") the image is all you have. Every move's result also
+  carries the readings from right after it (`distances_m`).
+- **Moves stop themselves short of obstacles.** `stop_within` (default 0.15 m): when a sensor
+  facing the way you drive reads closer than that, the robot stops with `ok: false` and an
+  `obstacle` block (sensor, reading, `estimated_traveled_m`); `already_within: true` means it
+  didn't move. It may coast a few centimetres further, so `distances_m` is where it ended up.
+  Keep the default unless you mean to touch something; then pass a smaller `stop_within` (0
+  turns it off). The sensors' beams are narrow and at base height, so a bump can still happen.
+- `ok: true` means nothing stopped the move, not "I arrived". Confirm that by looking. An
+  `error` key means the command never reached the robot: stop and say so.
+- **After an obstacle stop or a bump, re-plan.** Either one (`ok: false`) means the robot stopped
+  early by something: just short of it, or against it. `estimated_traveled_m` is about how far
+  that move got, so that is roughly how far away the obstacle was. Drop the rest of the plan. If
+  what's there is the target itself, you've arrived. Otherwise, after a bump, back off about
+  0.15 m first (`move_backward` after a front bump, `move_forward` after a rear one); then read
+  the sensors and look again, and plan a new approach from what you see: around the obstacle,
+  or in shorter steps. A stop well short of your plan means your image-based distances run
+  long, so lean on the sensors. After two such recoveries, a third stop means stop and say so.
 
 **Expression** — convey emotion, then reset.
 - Compose a brief expression from the arm / head / face / LED primitives (ranges and valid image

@@ -365,6 +365,70 @@ def test_drive_progress_inverts_the_calibration():
     assert runtime.calc_drive_progress(10 ** 6, 2.0) == 2.0     # never more than planned
 
 
+# ------------------------------------------ stop_within: the agent's own stop condition
+_FRONT = ("front_left", "front_center", "front_right")
+
+
+def test_the_default_stop_within_is_15_cm():
+    import inspect
+    from robot_tools import tools
+    for move in (tools.move_forward, tools.move_backward):
+        assert inspect.signature(move).parameters["stop_within"].default == 0.15
+
+
+def test_a_move_stops_when_a_sensor_facing_its_way_reads_inside_stop_within(monitor):
+    from robot_tools import runtime, tools
+    robot = runtime.get_robot()
+    send = robot.drive_time
+
+    def drive_toward_a_box(*args, **kwargs):          # 0.8 s in, the centre sensor reads 0.12 m
+        send(*args, **kwargs)
+        monitor._clock.t += 0.8
+        monitor.feed(_tof("toffc", 0.12))
+
+    robot.drive_time = drive_toward_a_box
+    r = tools.move_forward(2.0)                       # the default stop_within, 0.15 m
+    assert r["ok"] is False and "bump" not in r
+    assert r["obstacle"] == {"sensor": "front_center", "distance_m": 0.12, "stop_within": 0.15,
+                             "after_ms": 800,
+                             "estimated_traveled_m": runtime.calc_drive_progress(800, 2.0)}
+    assert robot.calls_of("stop")                     # stopped at the reading
+
+
+def test_stop_within_watches_only_trusted_readings_the_way_the_robot_drives(monitor):
+    from robot_tools import runtime, tools
+    robot = runtime.get_robot()
+    send = robot.drive_time
+
+    def drive(*args, **kwargs):
+        send(*args, **kwargs)
+        monitor._clock.t += 0.5
+        monitor.feed(_tof("tofr", 0.05))                  # behind: not where it's going
+        monitor.feed(_tof("toffl", 0.05, status=102))     # ahead, but the sensor doesn't trust it
+
+    robot.drive_time = drive
+    assert tools.move_forward(1.0)["ok"] is True
+    assert robot.calls_of("stop") == []
+    r = tools.move_backward(1.0)                          # backing up WOULD close on it
+    assert r["obstacle"]["already_within"] is True and r["obstacle"]["sensor"] == "back"
+    assert len(robot.calls_of("drive_time")) == 1         # so it wasn't sent
+    assert tools.move_backward(1.0, stop_within=0)["ok"] is True     # 0 turns the check off
+
+
+def test_stop_reason_puts_a_bump_first_and_ignores_readings_from_before_the_move(monitor):
+    monitor.feed(_tof("toffc", 0.05))                     # before the move began
+    monitor._clock.t += 1
+    since = monitor.now()
+    assert monitor.stop_reason(since, _FRONT, 0.15) is None
+    monitor._clock.t += 0.3
+    monitor.feed(_tof("toffl", 0.14))
+    monitor.feed(_tof("toffr", 0.10))
+    assert monitor.stop_reason(since, _FRONT, 0.15)["obstacle"]["sensor"] == "front_right"
+    assert monitor.stop_reason(since, _FRONT, 0.0) is None          # 0: no distance check
+    monitor.feed(_bump("bfl", True))
+    assert "bump" in monitor.stop_reason(since, _FRONT, 0.15)
+
+
 # ------------------------------------------ Test 9: the MCP server itself loads
 def test_the_mcp_server_module_imports():
     """Nothing above imports server.py, so an MCP SDK it can't run on (mcp 2.x renamed FastMCP)

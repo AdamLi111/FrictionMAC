@@ -233,17 +233,21 @@ def test_capture_view_returns_text_pov(sim_env):
     assert "FOV" in r["pov"] and "cup" in r["pov"]
 
 
-def test_move_forward_reports_collision(sim_env):
-    from robot_tools import tools
-    r = tools.move_forward(5.0)               # cup is in the straight path
-    assert r["ok"] is False and r["collision"] == "cup"
+def test_a_collision_is_logged_for_the_evaluator_but_not_told_to_the_agent(sim_env):
+    """Like the real robot, the agent learns that a bumper was pressed, never what it hit; the
+    world's log keeps the name for scoring."""
+    from robot_tools import runtime, tools
+    r = tools.move_forward(5.0, stop_within=0)    # cup is in the straight path
+    assert r["ok"] is False and "bump" in r
+    assert "collision" not in r and "cup" not in json.dumps(r)
+    assert runtime.get_sim_world().collisions[-1]["object"] == "cup"
 
 
 def test_a_sim_bump_reads_like_the_real_robots(sim_env):
     """The same result shape the physical robot's bump sensors produce, so the agents' steering
     describes one interface."""
     from robot_tools import tools
-    r = tools.move_forward(5.0)               # cup centred in the path, 2 m ahead
+    r = tools.move_forward(5.0, stop_within=0)    # cup centred in the path, 2 m ahead
     assert r["bump"]["bumpers"] == ["front_left", "front_right"]
     assert 1.5 < r["bump"]["estimated_traveled_m"] < 2.0
     assert r["distances_m"]["front_center"] < 0.02            # right up against it
@@ -321,3 +325,103 @@ def test_bundled_office_kitchen_scene_loads():
     assert w.objects and any(o.name == "umbrella" for o in w.objects)
     # umbrella is on the left wall → not visible straight ahead from the start pose
     assert not any(o["name"] == "umbrella" for o in w.visible_objects())
+
+
+# ------------------------------------------------------------ streamed sensors (sim/robot.py)
+# The simulated Misty drives over simulated time and streams its sensors into the same
+# SensorMonitor the robot feeds, so these exercise the robot's own movement code.
+_NEAR_WALL = {"name": "wall", "shape": {"type": "segment", "points": [[-2, 0.55], [2, 0.55]],
+                                        "thickness": 0.1}}          # face 0.5 m ahead
+
+
+@pytest.fixture
+def near_wall_env(tmp_path, monkeypatch):
+    """The robot at the origin facing a wall whose face is 0.5 m ahead (a 0.38 m gap)."""
+    scene_file = tmp_path / "scene.json"
+    scene_file.write_text(json.dumps(_scene(objects=[_NEAR_WALL])))
+    monkeypatch.setenv("ROBOT_SIM_SCENE", str(scene_file))
+    monkeypatch.setenv("WORLD_STATE_PATH", str(tmp_path / "ws.json"))
+    monkeypatch.setenv("TOOL_LOG_PATH", str(tmp_path / "tl.jsonl"))
+    monkeypatch.setenv("SIM_STATE_PATH", str(tmp_path / "sim_state.json"))
+    from robot_tools import runtime
+    runtime.reset()
+    yield
+    runtime.reset()
+
+
+def _gap_ahead():
+    from robot_tools import runtime
+    return runtime.get_sim_world().range_readings()["front_center"]
+
+
+def test_the_default_stop_keeps_the_robot_off_what_its_sensors_see(near_wall_env):
+    """A forward move stops itself once a front sensor reads closer than stop_within (0.15 m):
+    the robot never touches the wall, coasting a little past that reading before it stops."""
+    from robot_tools import runtime, tools
+    r = tools.move_forward(1.0)
+    assert r["ok"] is False and "bump" not in r
+    assert r["obstacle"]["sensor"] in ("front_left", "front_center", "front_right")
+    assert r["obstacle"]["distance_m"] < 0.15 and r["obstacle"]["stop_within"] == 0.15
+    assert 0.0 < _gap_ahead() < 0.15                       # stopped short, never touched
+    assert runtime.get_sim_world().collisions == []
+    # what the result reports is where the robot ended up, not the reading that stopped it
+    assert r["distances_m"]["front_center"] == pytest.approx(_gap_ahead(), abs=0.012)
+
+
+def test_a_move_that_would_start_inside_stop_within_is_not_sent(near_wall_env):
+    from robot_tools import runtime, tools
+    tools.move_forward(1.0)                                 # stops just short of the wall
+    pose = list(runtime.get_sim_world().robot_pos)
+    r = tools.move_forward(0.5)
+    assert r["obstacle"]["already_within"] is True and r["duration_ms"] == 0
+    assert runtime.get_sim_world().robot_pos == pose
+    touch = tools.move_forward(0.5, stop_within=0)          # 0 turns the check off
+    assert touch["ok"] is False and touch["bump"]["bumpers"] == ["front_left", "front_right"]
+
+
+def test_backing_up_watches_the_back_sensor_and_the_rear_bumpers(near_wall_env):
+    from robot_tools import tools
+    tools.turn_left(180)                                    # the wall is now behind
+    r = tools.move_backward(1.0)
+    assert r["obstacle"]["sensor"] == "back"
+    r = tools.move_backward(0.5, stop_within=0)
+    assert r["bump"]["bumpers"] == ["rear_left", "rear_right"]
+
+
+def test_each_range_sensor_reports_about_three_times_a_second(sim_env):
+    """Misty's measured rate: about one reading every 0.32 s per sensor, each on its own cycle,
+    with status 102 when nothing is in range (as here, before the robot has moved)."""
+    from collections import Counter
+    from robot_tools import runtime
+    monitor = runtime.get_sensors()
+    fed = []
+    feed = monitor.feed
+    monitor.feed = lambda raw: (fed.append(json.loads(raw)), feed(raw))
+    monitor.idle(3.16)                                      # ten reading periods
+    readings = [m["message"] for m in fed if "distanceInMeters" in m["message"]]
+    per_sensor = Counter(m["sensorId"] for m in readings)
+    assert set(per_sensor) == {"toffl", "toffc", "toffr", "tofr"}
+    assert all(9 <= n <= 11 for n in per_sensor.values()), per_sensor
+    assert {m["status"] for m in readings} == {102}
+
+
+def test_turns_take_the_exact_angle_asked(sim_env):
+    from robot_tools import runtime, tools
+    tools.turn_left(90)
+    world = runtime.get_sim_world()
+    assert world.heading == pytest.approx(270.0)
+    assert world.action_history[-1] == "turned left 90°"
+
+
+def test_simulated_time_costs_no_real_time(sim_env):
+    """A drive runs for its calibrated time on the simulated clock, in milliseconds of real
+    time, so evaluation runs aren't slowed down to the robot's pace."""
+    import time
+    from robot_tools import runtime, tools
+    start_sim, start = runtime.get_sensors().now(), time.perf_counter()
+    tools.move_forward(1.5)
+    tools.turn_right(180)
+    simulated = runtime.get_sensors().now() - start_sim
+    assert simulated >= (runtime.calc_drive_time(1.5) + runtime.calc_turn_time(180)) / 1000
+    assert time.perf_counter() - start < 1.0
+

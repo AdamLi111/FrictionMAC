@@ -10,12 +10,16 @@ Design rules (see UNDERSTANDING.md section 7):
     directly. They NEVER narrate -- speak() and ask_clarification() are the only talkers.
   - Every movement result reports the distance + bump sensors (sensors.py): the distances right
     after the move, and a "bump" block if a bumper was pressed during it.
+  - A straight move also stops itself near an obstacle: the agent sets `stop_within` (default
+    0.15 m), and the drive watches every reading from the sensors facing its way against it,
+    returning an "obstacle" block when one comes closer.
+  - The same movement code drives the real robot and the simulated one (sim/robot.py): both
+    stream their sensors into a SensorMonitor, and the simulation's runs on simulated time.
   - Vision returns raw base64 frames; no VLM runs here (the agent reasons over the images).
 """
 import contextlib
 import functools
 import inspect
-from datetime import datetime, timezone
 
 from . import config, runtime, sensors
 
@@ -75,18 +79,16 @@ def _tool(redact=None):
 # --------------------------------------------------------------------------- movement
 # All wheel movement holds the DRIVE lock, so two drive/turn calls can never overlap on the
 # motors. Non-DRIVE tools run concurrently.
-_SETTLE_S = 0.4   # after a real move: wait this long, at most, for every range sensor to report
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+_SETTLE_S = 0.4   # after a move: wait this long, at most, for every range sensor to report
+_COAST_S = 0.15   # after an early stop: the robot is still coasting to a halt for about this long
+DEFAULT_STOP_WITHIN_M = 0.15
+# The range sensors that look the way a straight drive goes.
+_WATCH = {"forward": ("front_left", "front_center", "front_right"), "backward": ("back",)}
 
 
 def _sensor_readings() -> dict:
     """The distance sensors as a result field, plus a note when there is no sensor data (so an
     `ok: true` can't be mistaken for "nothing was touched")."""
-    if config.is_sim():
-        return {"distances_m": runtime.get_sim_world().range_readings()}
     monitor = runtime.get_sensors()
     out = {"distances_m": monitor.distances()}
     if not monitor.online:
@@ -95,8 +97,6 @@ def _sensor_readings() -> dict:
 
 
 def _pressed_bumpers() -> list:
-    if config.is_sim():
-        return runtime.get_sim_world().bumpers_pressed()
     return runtime.get_sensors().pressed()
 
 
@@ -118,99 +118,120 @@ def _held_by_bumper(direction: str):
             **_sensor_readings()}
 
 
-def _drive_sim(distance: float, ms: int) -> dict:
-    """Apply a straight move to the sim world (exact distance, not reconstructed from ms) and
-    surface any collision, with the bump the real robot's bumpers would have reported.
-    `distance` may be negative for a backward move."""
-    world = runtime.get_sim_world()
-    col = world.move(distance)
+def _already_within(direction: str, stop_within: float):
+    """The result for a straight drive that `stop_within` would end at once, or None: a sensor
+    facing that way already reads closer than that, so the move isn't sent (the robot would
+    creep forward a little on every try). A reading the sensor doesn't trust, or no recent one,
+    doesn't hold the robot; the bumpers still stop it."""
+    if stop_within <= 0:
+        return None
+    readings = runtime.get_sensors().distances()
+    close = [(readings[s], s) for s in _WATCH[direction]
+             if isinstance(readings[s], float) and readings[s] < stop_within]
+    if not close:
+        return None
+    distance, sensor = min(close)
+    return {"ok": False, "duration_ms": 0,
+            "obstacle": {"sensor": sensor, "distance_m": distance, "stop_within": stop_within,
+                         "after_ms": 0, "estimated_traveled_m": 0.0, "already_within": True},
+            "message": (f"did not move: the {sensor} distance sensor already reads {distance} m, "
+                        f"closer than stop_within ({stop_within} m). To go closer on purpose, "
+                        f"pass a smaller stop_within (0 turns the check off); otherwise turn or "
+                        f"back up first."),
+            **_sensor_readings()}
+
+
+def _drive(linear: int, angular: int, ms: int, *, planned_m=None, planned_deg=None,
+           watch=(), stop_within: float = 0.0) -> dict:
+    """One timed drive, watched by the sensors, on the real robot or the simulated one.
+
+    The wait ends at the first bumper contact, or, with `stop_within` > 0, at the first trusted
+    reading from a sensor in `watch` closer than `stop_within` (the agent's own stop condition,
+    checked against every reading as it arrives), instead of sleeping out the planned time;
+    stop() is then sent. (Misty's hazard system already halts a forward drive when a front bumper
+    is pressed; stop() is harmless there and covers everything else.) Whichever ended the move
+    becomes the result: which bumper or sensor, how long into the move, and for a straight drive
+    (`planned_m`) about how far the robot got, from the drive calibration run backwards. Without
+    sensor data this is the old open-loop wait."""
+    monitor = runtime.get_sensors()
+    robot = runtime.get_robot()
+    if config.is_sim():                   # the simulated robot is told the exact amount
+        robot.plan_motion(distance_m=planned_m, degrees=planned_deg)
+    t0 = monitor.now()
+    robot.drive_time(linear, angular, ms)
+    reason = monitor.wait_for_stop(since=t0, timeout=runtime.wait_budget(ms / 1000),
+                                   watch=watch, stop_within=stop_within)
+    # The readings a result reports are taken after the robot came to rest: after an early stop,
+    # only from once it has coasted to a halt, so `distances_m` is where it ended up rather than
+    # where it was when the stop was sent.
+    coast = 0.0
+    if reason is not None:
+        robot.stop()
+        coast = _COAST_S
+    monitor.wait_fresh(since=monitor.now() + coast,
+                       timeout=runtime.wait_budget(coast + _SETTLE_S))
     runtime.save_sim_state()
-    runtime.sleep(ms / 1000)
-    if col["collision"]:
-        moved = col["moved"]
-        return {"ok": False, "collision": col["collision"], "message": col["message"],
-                "duration_ms": ms,
-                "bump": {"bumpers": col["bumpers"], "after_ms": runtime.calc_drive_time(moved),
-                         "estimated_traveled_m": round(moved, 2), "time": _now_iso()},
+    contacts = monitor.contacts_since(t0)     # also catches one that landed as the move ended
+    if contacts:
+        after_ms = max(0, int(round((contacts[0]["t"] - t0) * 1000)))
+        hit = {c["bumper"] for c in contacts}
+        bump = {"bumpers": [b for b in sensors.BUMPERS if b in hit], "after_ms": after_ms}
+        if planned_m is not None:
+            bump["estimated_traveled_m"] = runtime.calc_drive_progress(after_ms, planned_m)
+        if contacts[0].get("time"):
+            bump["time"] = contacts[0]["time"]
+        return {"ok": False, "duration_ms": ms, "bump": bump,
+                "message": f"a bumper was pressed {after_ms} ms into the move, so the robot "
+                           f"stopped",
+                **_sensor_readings()}
+    if reason is not None and "obstacle" in reason:
+        seen = reason["obstacle"]
+        after_ms = max(0, int(round((seen["t"] - t0) * 1000)))
+        obstacle = {"sensor": seen["sensor"], "distance_m": seen["distance_m"],
+                    "stop_within": stop_within, "after_ms": after_ms}
+        if planned_m is not None:
+            obstacle["estimated_traveled_m"] = runtime.calc_drive_progress(after_ms, planned_m)
+        return {"ok": False, "duration_ms": ms, "obstacle": obstacle,
+                "message": (f"stopped {after_ms} ms into the move: the {seen['sensor']} "
+                            f"distance sensor read {seen['distance_m']} m, closer than "
+                            f"stop_within ({stop_within} m)"),
                 **_sensor_readings()}
     return {"ok": True, "duration_ms": ms, **_sensor_readings()}
 
 
-def _drive_real(linear: int, angular: int, ms: int, planned_m=None) -> dict:
-    """One timed drive on the robot, watched by the bump sensors. Misty's hazard system already
-    halts a forward drive when a front bumper is pressed; stop() is sent on any contact too (it
-    is harmless, and covers reversing and turning), the wait ends at the contact instead of
-    sleeping out the planned time, and the contact becomes the result: which bumper, how long
-    into the move, and for a straight drive (`planned_m`) about how far the robot got, from the
-    drive calibration run backwards. Without sensor data this is the old open-loop wait."""
-    monitor = runtime.get_sensors()
-    robot = runtime.get_robot()
-    t0 = monitor.now()
-    robot.drive_time(linear, angular, ms)
-    if monitor.wait_for_contact(since=t0, timeout=runtime.wait_budget(ms / 1000)):
-        robot.stop()
-    monitor.wait_fresh(since=monitor.now(), timeout=runtime.wait_budget(_SETTLE_S))
-    contacts = monitor.contacts_since(t0)     # also catches one that landed as the move ended
-    if not contacts:
-        return {"ok": True, "duration_ms": ms, **_sensor_readings()}
-    after_ms = max(0, int(round((contacts[0]["t"] - t0) * 1000)))
-    hit = {c["bumper"] for c in contacts}
-    bump = {"bumpers": [b for b in sensors.BUMPERS if b in hit], "after_ms": after_ms}
-    if planned_m is not None:
-        bump["estimated_traveled_m"] = runtime.calc_drive_progress(after_ms, planned_m)
-    if contacts[0].get("time"):
-        bump["time"] = contacts[0]["time"]
-    return {"ok": False, "duration_ms": ms, "bump": bump,
-            "message": f"a bumper was pressed {after_ms} ms into the move, so the robot stopped",
-            **_sensor_readings()}
+def _straight(direction: str, distance: float, stop_within) -> dict:
+    ms = runtime.calc_drive_time(distance)
+    stop_within = max(0.0, float(stop_within or 0.0))
+    with runtime.motor_lock("DRIVE"):
+        held = _held_by_bumper(direction) or _already_within(direction, stop_within)
+        if held:
+            return held
+        return _drive(50 if direction == "forward" else -50, 0, ms, planned_m=distance,
+                      watch=_WATCH[direction], stop_within=stop_within)
 
 
 @_tool()
-def move_forward(distance: float = 1.0) -> dict:
-    ms = runtime.calc_drive_time(distance)
-    with runtime.motor_lock("DRIVE"):
-        held = _held_by_bumper("forward")
-        if held:
-            return held
-        if config.is_sim():
-            return _drive_sim(distance, ms)
-        return _drive_real(50, 0, ms, planned_m=distance)
+def move_forward(distance: float = 1.0, stop_within: float = DEFAULT_STOP_WITHIN_M) -> dict:
+    return _straight("forward", distance, stop_within)
 
 
 @_tool()
-def move_backward(distance: float = 1.0) -> dict:
-    ms = runtime.calc_drive_time(distance)
-    with runtime.motor_lock("DRIVE"):
-        held = _held_by_bumper("backward")
-        if held:
-            return held
-        if config.is_sim():
-            return _drive_sim(-distance, ms)
-        return _drive_real(-50, 0, ms, planned_m=distance)
+def move_backward(distance: float = 1.0, stop_within: float = DEFAULT_STOP_WITHIN_M) -> dict:
+    return _straight("backward", distance, stop_within)
 
 
 @_tool()
 def turn_left(degrees: float) -> dict:
     ms = runtime.calc_turn_time(degrees)
     with runtime.motor_lock("DRIVE"):
-        if config.is_sim():
-            runtime.get_sim_world().turn(-degrees)   # left = counter-clockwise = -θ
-            runtime.save_sim_state()
-            runtime.sleep(ms / 1000)
-            return {"ok": True, "duration_ms": ms, **_sensor_readings()}
-        return _drive_real(0, 100, ms)
+        return _drive(0, 100, ms, planned_deg=degrees)      # positive angular = counter-clockwise
 
 
 @_tool()
 def turn_right(degrees: float) -> dict:
     ms = runtime.calc_turn_time(degrees)
     with runtime.motor_lock("DRIVE"):
-        if config.is_sim():
-            runtime.get_sim_world().turn(degrees)    # right = clockwise = +θ
-            runtime.save_sim_state()
-            runtime.sleep(ms / 1000)
-            return {"ok": True, "duration_ms": ms, **_sensor_readings()}
-        return _drive_real(0, -100, ms)
+        return _drive(0, -100, ms, planned_deg=degrees)
 
 
 @_tool()
